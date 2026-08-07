@@ -1,0 +1,5 @@
+menuconfig MODULES_DYT_GUIDANCE
+	bool "dyt_guidance"
+	default n
+	---help---
+		Enable the DYT visual guidance controller module.

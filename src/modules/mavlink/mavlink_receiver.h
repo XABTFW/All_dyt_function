@@ -70,6 +70,7 @@
 #include <uORB/topics/differential_pressure.h>
 #include <uORB/topics/distance_sensor.h>
 #include <uORB/topics/follow_target.h>
+#include <uORB/topics/follower_info.h>
 #include <uORB/topics/generator_status.h>
 #include <uORB/topics/gimbal_manager_set_attitude.h>
 #include <uORB/topics/gimbal_manager_set_manual_control.h>
@@ -167,6 +168,7 @@ private:
 	void handle_message_command_long(mavlink_message_t *msg);
 	void handle_message_distance_sensor(mavlink_message_t *msg);
 	void handle_message_follow_target(mavlink_message_t *msg);
+	void handle_message_uav_info(mavlink_message_t *msg);
 	void handle_message_generator_status(mavlink_message_t *msg);
 	void handle_message_set_gps_global_origin(mavlink_message_t *msg);
 	void handle_message_gps_rtcm_data(mavlink_message_t *msg);
@@ -295,6 +297,7 @@ private:
 	uint16_t _mavlink_status_last_packet_rx_drop_count{0};
 
 	// ORB publications
+	uORB::Publication<follower_info_s> 			_follower_info_pub{ORB_ID(follower_info)};
 	uORB::Publication<airspeed_s>				_airspeed_pub{ORB_ID(airspeed)};
 	uORB::Publication<battery_status_s>			_battery_pub{ORB_ID(battery_status)};
 	uORB::Publication<camera_status_s>			_camera_status_pub{ORB_ID(camera_status)};

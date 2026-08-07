@@ -137,6 +137,10 @@ void
 MavlinkReceiver::handle_message(mavlink_message_t *msg)
 {
 	switch (msg->msgid) {
+	case MAVLINK_MSG_ID_UAV_INFO:
+		handle_message_uav_info(msg);
+		break;
+
 	case MAVLINK_MSG_ID_COMMAND_LONG:
 		handle_message_command_long(msg);
 		break;
@@ -3532,4 +3536,32 @@ void MavlinkReceiver::stop()
 {
 	_should_exit.store(true);
 	pthread_join(_thread, nullptr);
+}
+
+void MavlinkReceiver::handle_message_uav_info(mavlink_message_t *msg)
+{
+	mavlink_uav_info_t mavlink_position{};
+	mavlink_msg_uav_info_decode(msg, &mavlink_position);
+
+	if (msg->sysid == 0 || mavlink_position.mavid != msg->sysid || !PX4_ISFINITE(mavlink_position.lat) ||
+	    !PX4_ISFINITE(mavlink_position.lon) || !PX4_ISFINITE(mavlink_position.rel_alt) ||
+	    fabsf(mavlink_position.lat) > 90.f || fabsf(mavlink_position.lon) > 180.f) {
+		return;
+	}
+
+	follower_info_s position{};
+	position.timestamp = hrt_absolute_time();
+	position.mavid = mavlink_position.mavid;
+	position.lat = mavlink_position.lat;
+	position.lon = mavlink_position.lon;
+	position.alt = mavlink_position.rel_alt;
+	position.vx = mavlink_position.vx;
+	position.vy = mavlink_position.vy;
+	position.vz = mavlink_position.vz;
+	position.yaw = mavlink_position.yaw;
+	position.yawspeed = mavlink_position.yaw_speed;
+	position.land = mavlink_position.land & 1u;
+	position.at_target = (mavlink_position.land & 2u) != 0;
+	position.source = follower_info_s::SOURCE_REAL_POSITION;
+	_follower_info_pub.publish(position);
 }

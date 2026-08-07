@@ -55,6 +55,7 @@ set(msg_files
 	CanInterfaceStatus.msg
 	CellularStatus.msg
 	CollisionConstraints.msg
+	CooperativePosition.msg
 	ControlAllocatorStatus.msg
 	Cpuload.msg
 	DatamanRequest.msg
@@ -67,6 +68,10 @@ set(msg_files
 	DistanceSensor.msg
 	DistanceSensorModeChangeRequest.msg
 	DronecanNodeStatus.msg
+	DytCommand.msg
+	DytGuidanceStatus.msg
+	DytStatusReply.msg
+	DytTarget.msg
 	Ekf2Timestamps.msg
 	EscReport.msg
 	EscStatus.msg
@@ -91,6 +96,7 @@ set(msg_files
 	FollowTarget.msg
 	FollowTargetEstimator.msg
 	FollowTargetStatus.msg
+	FollowerInfo.msg
 	FuelTankStatus.msg
 	FixedWingLateralGuidanceStatus.msg
 	FixedWingLateralStatus.msg

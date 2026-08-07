@@ -1,0 +1,5 @@
+menuconfig MODULES_COOPERATIVE_RENDEZVOUS
+	bool "cooperative_rendezvous"
+	default n
+	---help---
+		Enable two-aircraft cooperative rendezvous position sharing and approach.

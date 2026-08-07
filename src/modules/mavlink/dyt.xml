@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<mavlink>
+  <include>mavlink/message_definitions/v1.0/common.xml</include>
+  <version>3</version>
+  <dialect>0</dialect>
+  <messages>
+    <message id="12921" name="UAV_INFO">
+      <description>Aircraft position sharing information.</description>
+      <field type="uint32_t" name="mavid">MAVLink system ID of the source aircraft.</field>
+      <field type="uint32_t" name="group_id">Swarm group ID.</field>
+      <field type="uint8_t" name="is_leader">One for a leader aircraft, zero otherwise.</field>
+      <field type="float" name="lat" units="deg">WGS84 latitude.</field>
+      <field type="float" name="lon" units="deg">WGS84 longitude.</field>
+      <field type="float" name="yaw" units="rad">NED heading.</field>
+      <field type="float" name="yaw_speed" units="rad/s">NED yaw rate.</field>
+      <field type="float" name="rel_alt" units="m">Altitude AMSL.</field>
+      <field type="float" name="vx" units="m/s">NED velocity north.</field>
+      <field type="float" name="vy" units="m/s">NED velocity east.</field>
+      <field type="float" name="vz" units="m/s">NED velocity down.</field>
+      <field type="uint32_t" name="land">Landing state flags.</field>
+    </message>
+  </messages>
+</mavlink>

@@ -1,0 +1,5 @@
+menuconfig DRIVERS_DYT_GIMBAL
+	bool "dyt_gimbal"
+	default n
+	---help---
+		Enable support for the DYT serial gimbal telemetry driver.

@@ -1,0 +1,18 @@
+#!/bin/sh
+#
+# DYT payload and cooperative rendezvous integration for CUAV 7-Nano.
+# DYT gimbal: TEL2 (/dev/ttyS3), SDM50 rangefinder: GPS2 (/dev/ttyS6).
+
+dyt_gimbal start -d /dev/ttyS3
+dyt_guidance start
+sdm50 start -d /dev/ttyS6
+
+if param compare MAV_SYS_ID 1
+then
+	cooperative_rendezvous start -r broadcast
+fi
+
+if param compare MAV_SYS_ID 2
+then
+	cooperative_rendezvous start -r rendezvous -t 1
+fi
