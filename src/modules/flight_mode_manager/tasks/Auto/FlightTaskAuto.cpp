@@ -77,6 +77,8 @@ bool FlightTaskAuto::activate(const trajectory_setpoint_s &last_setpoint)
 	_updateTrajConstraints();
 	_is_emergency_braking_active = false;
 	_time_last_cruise_speed_override = 0;
+	_rtl_xy_constraints_active = false;
+	_rtl_xy_altitude_valid = false;
 
 	return ret;
 }
@@ -92,6 +94,7 @@ void FlightTaskAuto::reActivate()
 bool FlightTaskAuto::updateInitialize()
 {
 	bool ret = FlightTask::updateInitialize();
+	_rtl_xy_altitude_valid = PX4_ISFINITE(_dist_to_ground);
 
 	_sub_home_position.update();
 	_sub_vehicle_status.update();
@@ -776,17 +779,29 @@ bool FlightTaskAuto::isTargetModified() const
 
 void FlightTaskAuto::_updateTrajConstraints()
 {
+	const bool rtl_rotary_wing = _sub_vehicle_status.get().nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+				     && _sub_vehicle_status.get().vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+	_rtl_xy_constraints_active = rtl_constraints::updateRtlHorizontalConstraintsActivation(
+					 rtl_rotary_wing, _rtl_xy_constraints_active,
+					 _rtl_xy_altitude_valid ? _dist_to_ground : NAN, _param_rtl_xy_alt.get());
+	const rtl_constraints::RtlHorizontalConstraints horizontal_constraints =
+		rtl_constraints::selectRtlHorizontalConstraints(_rtl_xy_constraints_active,
+				_mc_cruise_speed, _param_mpc_xy_vel_max.get(), _param_mpc_acc_hor.get(), _param_mpc_jerk_auto.get(),
+				_param_rtl_xy_speed.get(), _param_rtl_xy_acc.get(), _param_rtl_xy_jerk.get());
+
 	// update params of the position smoothing
 	_position_smoothing.setMaxAllowedHorizontalError(_param_mpc_xy_err_max.get());
 	_position_smoothing.setVerticalAcceptanceRadius(_param_nav_mc_alt_rad.get());
-	_position_smoothing.setCruiseSpeed(_mc_cruise_speed);
+	_position_smoothing.setCruiseSpeed(horizontal_constraints.cruise_speed);
 	_position_smoothing.setHorizontalTrajectoryGain(_param_mpc_xy_traj_p.get());
 	_position_smoothing.setTargetAcceptanceRadius(_target_acceptance_radius);
 
 	// Update the constraints of the trajectories
-	_position_smoothing.setMaxAccelerationXY(_param_mpc_acc_hor.get()); // TODO : Should be computed using heading
+	_position_smoothing.setMaxAccelerationXY(
+		horizontal_constraints.acceleration); // TODO : Should be computed using heading
 	_position_smoothing.setMaxVelocityXY(_param_mpc_xy_vel_max.get());
 	_position_smoothing.setMaxJerk(_param_mpc_jerk_auto.get()); // TODO : Should be computed using heading
+	_position_smoothing.setMaxJerkXY(horizontal_constraints.jerk);
 
 	if (_is_emergency_braking_active) {
 		// When initializing with large velocity, allow 1g of

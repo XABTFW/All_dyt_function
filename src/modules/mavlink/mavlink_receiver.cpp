@@ -137,8 +137,28 @@ void
 MavlinkReceiver::handle_message(mavlink_message_t *msg)
 {
 	switch (msg->msgid) {
+	case MAVLINK_MSG_ID_DYT_GUIDANCE_COMMAND:
+		handle_message_dyt_guidance_command(msg);
+		break;
+
+	case MAVLINK_MSG_ID_DYT_TRACK_POINT_COMMAND:
+		handle_message_dyt_track_point_command(msg);
+		break;
+
+	case MAVLINK_MSG_ID_TEST_MAVLINK:
+		handle_message_test_mavlink_rx(msg);
+		break;
+
+	case MAVLINK_MSG_ID_SWARM_START_FLAG:
+		handle_message_swarm_start_flag(msg);
+		break;
+
 	case MAVLINK_MSG_ID_UAV_INFO:
 		handle_message_uav_info(msg);
+		break;
+
+	case MAVLINK_MSG_ID_SWARM_MISSION_ITEM:
+		handle_message_swarm_mission_item(msg);
 		break;
 
 	case MAVLINK_MSG_ID_COMMAND_LONG:
@@ -1035,6 +1055,21 @@ MavlinkReceiver::handle_message_att_pos_mocap(mavlink_message_t *msg)
 }
 
 void
+MavlinkReceiver::publish_gcs_trajectory_setpoint(const trajectory_setpoint_s &setpoint, hrt_abstime timestamp)
+{
+	if (!matrix::Vector3f(setpoint.position).isAllFinite()) {
+		return;
+	}
+
+	gcs_trajectory_setpoint_s gcs_setpoint{};
+	gcs_setpoint.timestamp = timestamp;
+	memcpy(gcs_setpoint.position, setpoint.position, sizeof(gcs_setpoint.position));
+	memcpy(gcs_setpoint.velocity, setpoint.velocity, sizeof(gcs_setpoint.velocity));
+	gcs_setpoint.yaw = setpoint.yaw;
+	_gcs_trajectory_setpoint_pub.publish(gcs_setpoint);
+}
+
+void
 MavlinkReceiver::handle_message_set_position_target_local_ned(mavlink_message_t *msg)
 {
 	mavlink_set_position_target_local_ned_t target_local_ned;
@@ -1136,6 +1171,7 @@ MavlinkReceiver::handle_message_set_position_target_local_ned(mavlink_message_t 
 			// publish offboard_control_mode
 			ocm.timestamp = hrt_absolute_time();
 			_offboard_control_mode_pub.publish(ocm);
+			publish_gcs_trajectory_setpoint(setpoint, ocm.timestamp);
 
 			vehicle_status_s vehicle_status{};
 			_vehicle_status_sub.copy(&vehicle_status);
@@ -1258,6 +1294,7 @@ MavlinkReceiver::handle_message_set_position_target_global_int(mavlink_message_t
 			// publish offboard_control_mode
 			ocm.timestamp = hrt_absolute_time();
 			_offboard_control_mode_pub.publish(ocm);
+			publish_gcs_trajectory_setpoint(setpoint, ocm.timestamp);
 
 			vehicle_status_s vehicle_status{};
 			_vehicle_status_sub.copy(&vehicle_status);
@@ -3538,30 +3575,264 @@ void MavlinkReceiver::stop()
 	pthread_join(_thread, nullptr);
 }
 
-void MavlinkReceiver::handle_message_uav_info(mavlink_message_t *msg)
-{
-	mavlink_uav_info_t mavlink_position{};
-	mavlink_msg_uav_info_decode(msg, &mavlink_position);
+void
+MavlinkReceiver::handle_message_swarm_start_flag(mavlink_message_t *msg){
+	//leader_id_s _group_id{};
+	_group_id_sub.copy(&_group_id);
+	swarm_start_flag_s _swarm_start_flag{};
 
-	if (msg->sysid == 0 || mavlink_position.mavid != msg->sysid || !PX4_ISFINITE(mavlink_position.lat) ||
-	    !PX4_ISFINITE(mavlink_position.lon) || !PX4_ISFINITE(mavlink_position.rel_alt) ||
-	    fabsf(mavlink_position.lat) > 90.f || fabsf(mavlink_position.lon) > 180.f) {
+	mavlink_swarm_start_flag_t _swarm_start_flag_msg{};
+	mavlink_msg_swarm_start_flag_decode(msg, &_swarm_start_flag_msg);
+
+	// start_swarm 字段现在用于传递目标组号 (1-4)
+	// 0 表示发送给所有组，1-4 表示发送给指定组
+	uint8_t target_group = _swarm_start_flag_msg.start_swarm;
+	uint32_t my_group = _group_id.group_id;
+
+	PX4_INFO("收到集群命令: 目标组=%u, 本机组=%u, 起飞=%u, 降落=%u, 暂停=%u, 继续=%u",
+		(unsigned)target_group, (unsigned)my_group,
+		(unsigned)_swarm_start_flag_msg.start_swarm_auto,
+		(unsigned)_swarm_start_flag_msg.stop_swarm,
+		(unsigned)_swarm_start_flag_msg.Pause_swarm,
+		(unsigned)_swarm_start_flag_msg.continue_swarm);
+
+	// 组号过滤：target_group=0 表示所有组，否则只有匹配的组才执行
+	if (target_group != 0 && target_group != my_group) {
+		PX4_INFO("组号不匹配，忽略命令 (目标组=%u, 本机组=%u)", (unsigned)target_group, (unsigned)my_group);
 		return;
 	}
 
-	follower_info_s position{};
-	position.timestamp = hrt_absolute_time();
-	position.mavid = mavlink_position.mavid;
-	position.lat = mavlink_position.lat;
-	position.lon = mavlink_position.lon;
-	position.alt = mavlink_position.rel_alt;
-	position.vx = mavlink_position.vx;
-	position.vy = mavlink_position.vy;
-	position.vz = mavlink_position.vz;
-	position.yaw = mavlink_position.yaw;
-	position.yawspeed = mavlink_position.yaw_speed;
-	position.land = mavlink_position.land & 1u;
-	position.at_target = (mavlink_position.land & 2u) != 0;
-	position.source = follower_info_s::SOURCE_REAL_POSITION;
-	_follower_info_pub.publish(position);
+	// 组号匹配，执行命令
+	if(_group_id.leader == 0){
+		// 从机
+		_swarm_start_flag.timestamp = hrt_absolute_time();
+		_swarm_start_flag.start_swarm = _swarm_start_flag_msg.start_swarm;
+		_swarm_start_flag.start_swarm_auto = _swarm_start_flag_msg.start_swarm_auto;
+		_swarm_start_flag.stop_swarm = _swarm_start_flag_msg.stop_swarm;
+		_swarm_start_flag.pause_swarm = _swarm_start_flag_msg.Pause_swarm;
+		_swarm_start_flag.continue_swarm = _swarm_start_flag_msg.continue_swarm;
+		_swarm_start_flag_pub.publish(_swarm_start_flag);
+		PX4_INFO("从机执行命令");
+	}
+	else if(_group_id.leader == 1) {
+		// 主机
+		_swarm_start_flag.timestamp = hrt_absolute_time();
+		_swarm_start_flag.start_swarm = _swarm_start_flag_msg.start_swarm;
+		_swarm_start_flag.start_swarm_auto = _swarm_start_flag_msg.start_swarm_auto;
+		_swarm_start_flag.stop_swarm = _swarm_start_flag_msg.stop_swarm;
+		_swarm_start_flag.pause_swarm = _swarm_start_flag_msg.Pause_swarm;
+		_swarm_start_flag.continue_swarm = _swarm_start_flag_msg.continue_swarm;
+		_swarm_start_flag_pub.publish(_swarm_start_flag);
+		PX4_INFO("主机执行命令");
+	}
+}
+
+void
+MavlinkReceiver::handle_message_uav_info(mavlink_message_t *msg)
+{
+		uav_info_s _uav_info{};
+		follower_info_s _follower_info{};
+
+		mavlink_uav_info_t  _uav_info_msg{};
+		mavlink_msg_uav_info_decode(msg, &_uav_info_msg);
+
+		// ★★★ 检查是否是主机的真实位置消息（mavid >= 100 表示避撞用的真实位置）★★★
+		bool is_leader_real_pos = (_uav_info_msg.mavid >= 100);
+		uint32_t actual_mavid = is_leader_real_pos ? (_uav_info_msg.mavid - 100) : _uav_info_msg.mavid;
+
+		// ★★★ 直接使用消息中的 is_leader 字段，不再通过参数判断 ★★★
+		bool is_leader = (_uav_info_msg.is_leader == 1);
+		uint32_t group_id = _uav_info_msg.group_id;
+
+		if (is_leader && !is_leader_real_pos) {
+			// 主机的目标位置消息 → 发布到 uav_info（用于从机跟随）
+			_uav_info.timestamp = hrt_absolute_time();
+			_uav_info.mavid = actual_mavid;
+			_uav_info.group_id = group_id;
+			_uav_info.is_leader = true;
+			_uav_info.lat = _uav_info_msg.lat;
+			_uav_info.lon = _uav_info_msg.lon;
+			_uav_info.alt = _uav_info_msg.rel_alt;
+			_uav_info.vx  = _uav_info_msg.vx;
+			_uav_info.vy  = _uav_info_msg.vy;
+			_uav_info.vz  = _uav_info_msg.vz;
+			_uav_info.yaw = _uav_info_msg.yaw;
+			_uav_info.yawspeed = _uav_info_msg.yaw_speed;
+			_uav_info.land = _uav_info_msg.land;
+			_uav_info_pub.publish(_uav_info);
+
+		} else if (is_leader && is_leader_real_pos) {
+			// ★★★ 主机的真实位置消息 → 发布到 follower_info（用于避撞）★★★
+			_follower_info.timestamp = hrt_absolute_time();
+			_follower_info.mavid = actual_mavid;
+			_follower_info.lat = _uav_info_msg.lat;
+			_follower_info.lon = _uav_info_msg.lon;
+			_follower_info.alt = _uav_info_msg.rel_alt;
+			_follower_info.vx  = _uav_info_msg.vx;
+			_follower_info.vy  = _uav_info_msg.vy;
+			_follower_info.vz  = _uav_info_msg.vz;
+			_follower_info.yaw = _uav_info_msg.yaw;
+			_follower_info.yawspeed = _uav_info_msg.yaw_speed;
+			// 从land字段解析: Bit 0 = landing, Bit 1 = at_target
+			_follower_info.land = _uav_info_msg.land & 0x01;
+			_follower_info.at_target = (_uav_info_msg.land & 0x02) ? 1 : 0;
+			_follower_info.source = follower_info_s::SOURCE_LEADER_REAL_POSITION;
+			_follower_info_pub.publish(_follower_info);
+
+		} else {
+			// 从机的真实位置消息 → 发布到 follower_info（用于避撞）
+			_follower_info.timestamp = hrt_absolute_time();
+			_follower_info.mavid = actual_mavid;
+			_follower_info.lat = _uav_info_msg.lat;
+			_follower_info.lon = _uav_info_msg.lon;
+			_follower_info.alt = _uav_info_msg.rel_alt;
+			_follower_info.vx  = _uav_info_msg.vx;
+			_follower_info.vy  = _uav_info_msg.vy;
+			_follower_info.vz  = _uav_info_msg.vz;
+			_follower_info.yaw = _uav_info_msg.yaw;
+			_follower_info.yawspeed = _uav_info_msg.yaw_speed;
+			// 从land字段解析: Bit 0 = landing, Bit 1 = at_target
+			_follower_info.land = _uav_info_msg.land & 0x01;
+			_follower_info.at_target = (_uav_info_msg.land & 0x02) ? 1 : 0;
+			_follower_info.source = follower_info_s::SOURCE_REAL_POSITION;
+			_follower_info_pub.publish(_follower_info);
+		}
+}
+
+void
+MavlinkReceiver::handle_message_swarm_mission_item(mavlink_message_t *msg)
+{
+	mavlink_swarm_mission_item_t mavlink_msg;
+	mavlink_msg_swarm_mission_item_decode(msg, &mavlink_msg);
+
+	swarm_mission_item_s item{};
+	item.timestamp = hrt_absolute_time();
+	item.group_id = mavlink_msg.group_id;
+	item.leader_id = mavlink_msg.leader_id;
+	item.mission_id = mavlink_msg.mission_id;
+	item.total_count = mavlink_msg.total_count;
+	item.current_seq = mavlink_msg.current_seq;
+	item.seq = mavlink_msg.seq;
+	item.nav_cmd = mavlink_msg.nav_cmd;
+	item.lat = mavlink_msg.lat;
+	item.lon = mavlink_msg.lon;
+	item.alt = mavlink_msg.alt;
+	item.yaw = mavlink_msg.yaw;
+	item.acceptance_radius = mavlink_msg.acceptance_radius;
+	item.loiter_radius = mavlink_msg.loiter_radius;
+	item.time_inside = mavlink_msg.time_inside;
+	item.autocontinue = (mavlink_msg.autocontinue == 1);
+	item.sync_type = mavlink_msg.sync_type;
+
+	_swarm_mission_item_pub.publish(item);
+}
+
+
+void
+MavlinkReceiver::handle_message_test_mavlink_rx(mavlink_message_t *msg)
+{
+	    mavlink_test_mavlink_t mavlink_test_msg;
+	    mavlink_msg_test_mavlink_decode(msg, &mavlink_test_msg);
+
+	    test_mavlink_rx_s __test_mavlink_rx;
+
+	    __test_mavlink_rx.test1=mavlink_test_msg.test1;
+	    __test_mavlink_rx.test2=mavlink_test_msg.test2;
+	    __test_mavlink_rx.test3=mavlink_test_msg.test3;
+	    _test_mavlink_rx_pub.publish(__test_mavlink_rx);
+}
+
+void MavlinkReceiver::handle_message_dyt_guidance_command(mavlink_message_t *msg)
+{
+	mavlink_dyt_guidance_command_t mavlink_command{};
+	mavlink_msg_dyt_guidance_command_decode(msg, &mavlink_command);
+
+	if ((mavlink_command.target_system != 0 &&
+	     mavlink_command.target_system != _mavlink.get_system_id()) ||
+	    (mavlink_command.target_component != 0 &&
+	     mavlink_command.target_component != _mavlink.get_component_id())) {
+		return;
+	}
+
+	dyt_guidance_command_s command{};
+	command.timestamp = hrt_absolute_time();
+	command.sequence = mavlink_command.request_id;
+	command.source_system = msg->sysid;
+	command.source_component = msg->compid;
+	command.target_system = mavlink_command.target_system;
+	command.target_component = mavlink_command.target_component;
+	command.phase = mavlink_command.phase;
+	_dyt_guidance_command_pub.publish(command);
+}
+
+void MavlinkReceiver::send_dyt_track_point_ack(const mavlink_message_t &request, uint32_t request_id, uint16_t x_px,
+		uint16_t y_px, uint8_t result)
+{
+	mavlink_dyt_track_point_ack_t ack{};
+	ack.request_id = request_id;
+	ack.x_px = x_px;
+	ack.y_px = y_px;
+	ack.target_system = request.sysid;
+	ack.target_component = request.compid;
+	ack.result = result;
+	mavlink_msg_dyt_track_point_ack_send_struct(_mavlink.get_channel(), &ack);
+}
+
+void MavlinkReceiver::handle_message_dyt_track_point_command(mavlink_message_t *msg)
+{
+	mavlink_dyt_track_point_command_t mavlink_command{};
+	mavlink_msg_dyt_track_point_command_decode(msg, &mavlink_command);
+
+	if ((mavlink_command.target_system != 0 &&
+	     mavlink_command.target_system != _mavlink.get_system_id()) ||
+	    (mavlink_command.target_component != 0 &&
+	     mavlink_command.target_component != _mavlink.get_component_id())) {
+		return;
+	}
+
+	const bool duplicate_request = mavlink_command.request_id != 0 &&
+				       mavlink_command.request_id == _last_dyt_track_request_id &&
+				       msg->sysid == _last_dyt_track_source_system &&
+				       msg->compid == _last_dyt_track_source_component;
+
+	if (duplicate_request) {
+		const bool same_payload = mavlink_command.x_px == _last_dyt_track_x_px &&
+					  mavlink_command.y_px == _last_dyt_track_y_px &&
+					  mavlink_command.image_width_px == _last_dyt_track_image_width_px &&
+					  mavlink_command.image_height_px == _last_dyt_track_image_height_px;
+		const uint8_t result = same_payload ? _last_dyt_track_result : static_cast<uint8_t>(MAV_RESULT_DENIED);
+		send_dyt_track_point_ack(*msg, mavlink_command.request_id, mavlink_command.x_px, mavlink_command.y_px, result);
+		return;
+	}
+
+	uint8_t result = MAV_RESULT_DENIED;
+	const bool valid_coordinates = mavlink_command.request_id != 0 &&
+				       mavlink_command.image_width_px > 0 &&
+				       mavlink_command.image_height_px > 0 &&
+				       mavlink_command.x_px < mavlink_command.image_width_px &&
+				       mavlink_command.y_px < mavlink_command.image_height_px &&
+				       mavlink_command.x_px <= INT16_MAX &&
+				       mavlink_command.y_px <= INT16_MAX;
+
+	if (valid_coordinates) {
+		dyt_command_s command{};
+		command.timestamp = hrt_absolute_time();
+		command.command = dyt_command_s::CMD_TRACK_POINT;
+		command.param_x = static_cast<int16_t>(mavlink_command.x_px);
+		command.param_y = static_cast<int16_t>(mavlink_command.y_px);
+		result = _dyt_command_pub.publish(command) ? MAV_RESULT_ACCEPTED : MAV_RESULT_FAILED;
+	}
+
+	if (mavlink_command.request_id != 0) {
+		_last_dyt_track_request_id = mavlink_command.request_id;
+		_last_dyt_track_x_px = mavlink_command.x_px;
+		_last_dyt_track_y_px = mavlink_command.y_px;
+		_last_dyt_track_image_width_px = mavlink_command.image_width_px;
+		_last_dyt_track_image_height_px = mavlink_command.image_height_px;
+		_last_dyt_track_source_system = msg->sysid;
+		_last_dyt_track_source_component = msg->compid;
+		_last_dyt_track_result = result;
+	}
+
+	send_dyt_track_point_ack(*msg, mavlink_command.request_id, mavlink_command.x_px, mavlink_command.y_px, result);
 }

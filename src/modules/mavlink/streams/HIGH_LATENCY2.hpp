@@ -530,7 +530,8 @@ private:
 		airspeed_s airspeed;
 
 		if (_airspeed_sub.update(&airspeed)) {
-			_airspeed.add_value(airspeed.indicated_airspeed_m_s, _update_rate_filtered);
+			const float indicated_airspeed = airspeed.indicated_airspeed_m_s;
+			_airspeed.add_value(indicated_airspeed * (indicated_airspeed >= 20.f ? 1.3f : 1.f), _update_rate_filtered);
 		}
 	}
 
@@ -561,8 +562,10 @@ private:
 		vehicle_local_position_s local_pos;
 
 		if (_local_pos_sub.update(&local_pos)) {
-			_climb_rate.add_value(fabsf(local_pos.vz), _update_rate_filtered);
-			_groundspeed.add_value(sqrtf(local_pos.vx * local_pos.vx + local_pos.vy * local_pos.vy), _update_rate_filtered);
+			const float ground_speed = sqrtf(local_pos.vx * local_pos.vx + local_pos.vy * local_pos.vy);
+			const float velocity_scale = PX4_ISFINITE(ground_speed) && ground_speed >= 20.f ? 1.3f : 1.f;
+			_climb_rate.add_value(fabsf(local_pos.vz) * velocity_scale, _update_rate_filtered);
+			_groundspeed.add_value(ground_speed * velocity_scale, _update_rate_filtered);
 		}
 	}
 

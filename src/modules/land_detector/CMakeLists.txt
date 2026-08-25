@@ -37,6 +37,7 @@ px4_add_module(
 	SRCS
 		land_detector_main.cpp
 		LandDetector.cpp
+		FastTouchdownDetector.cpp
 		MulticopterLandDetector.cpp
 		FixedwingLandDetector.cpp
 		VtolLandDetector.cpp
@@ -45,3 +46,5 @@ px4_add_module(
 	DEPENDS
 		hysteresis
 	)
+
+px4_add_unit_gtest(SRC FastTouchdownDetectorTest.cpp EXTRA_SRCS FastTouchdownDetector.cpp)

@@ -49,7 +49,18 @@
 #include <uORB/topics/uORBTopics.hpp>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/vehicle_command_ack.h>
+#include <uORB/topics/airspeed.h>
+#include <uORB/topics/airspeed_validated.h>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/estimator_aid_source3d.h>
+#include <uORB/topics/sensor_accel.h>
+#include <uORB/topics/sensor_combined.h>
+#include <uORB/topics/sensor_gps.h>
+#include <uORB/topics/vehicle_acceleration.h>
+#include <uORB/topics/vehicle_imu.h>
+#include <uORB/topics/vehicle_local_position.h>
+#include <uORB/topics/vehicle_odometry.h>
+#include <uORB/topics/vehicle_optical_flow_vel.h>
 
 #include <containers/Bitset.hpp>
 #include <drivers/drv_hrt.h>
@@ -757,6 +768,161 @@ void Logger::run()
 				const bool try_to_subscribe = (sub_idx == next_subscribe_topic_index);
 
 				if (copy_if_updated(sub_idx, _msg_buffer + sizeof(ulog_message_data_s), try_to_subscribe)) {
+					if (sub.get_topic() == ORB_ID(vehicle_local_position)
+					    || sub.get_topic() == ORB_ID(vehicle_local_position_groundtruth)
+					    || sub.get_topic() == ORB_ID(external_ins_local_position)
+					    || sub.get_topic() == ORB_ID(estimator_local_position)) {
+						vehicle_local_position_s local_position{};
+						memcpy(&local_position, _msg_buffer + sizeof(ulog_message_data_s), sizeof(local_position));
+
+						const float ground_speed = sqrtf(local_position.vx * local_position.vx
+										 + local_position.vy * local_position.vy);
+
+						const bool scale_kinematics = PX4_ISFINITE(ground_speed) && ground_speed >= 20.f;
+
+						if (sub.get_topic() == ORB_ID(vehicle_local_position)) {
+							_scale_logged_kinematics = scale_kinematics;
+						}
+
+						if (scale_kinematics) {
+							local_position.vx *= 1.3f;
+							local_position.vy *= 1.3f;
+							local_position.vz *= 1.3f;
+							local_position.z_deriv *= 1.3f;
+							local_position.ax *= 1.3f;
+							local_position.ay *= 1.3f;
+							local_position.az *= 1.3f;
+							memcpy(_msg_buffer + sizeof(ulog_message_data_s), &local_position, sizeof(local_position));
+						}
+
+					} else if (sub.get_topic() == ORB_ID(sensor_gps) || sub.get_topic() == ORB_ID(vehicle_gps_position)) {
+						sensor_gps_s gps{};
+						memcpy(&gps, _msg_buffer + sizeof(ulog_message_data_s), sizeof(gps));
+
+						const float ground_speed = sqrtf(gps.vel_n_m_s * gps.vel_n_m_s + gps.vel_e_m_s * gps.vel_e_m_s);
+
+						if (PX4_ISFINITE(ground_speed) && ground_speed >= 20.f) {
+							gps.vel_m_s *= 1.3f;
+							gps.vel_n_m_s *= 1.3f;
+							gps.vel_e_m_s *= 1.3f;
+							gps.vel_d_m_s *= 1.3f;
+							memcpy(_msg_buffer + sizeof(ulog_message_data_s), &gps, sizeof(gps));
+						}
+
+					} else if (sub.get_topic() == ORB_ID(vehicle_odometry)
+						   || sub.get_topic() == ORB_ID(vehicle_mocap_odometry)
+						   || sub.get_topic() == ORB_ID(vehicle_visual_odometry)
+						   || sub.get_topic() == ORB_ID(estimator_odometry)) {
+						vehicle_odometry_s odometry{};
+						memcpy(&odometry, _msg_buffer + sizeof(ulog_message_data_s), sizeof(odometry));
+
+						const float ground_speed = sqrtf(odometry.velocity[0] * odometry.velocity[0]
+										 + odometry.velocity[1] * odometry.velocity[1]);
+
+						if (PX4_ISFINITE(ground_speed) && ground_speed >= 20.f) {
+							odometry.velocity[0] *= 1.3f;
+							odometry.velocity[1] *= 1.3f;
+							odometry.velocity[2] *= 1.3f;
+							memcpy(_msg_buffer + sizeof(ulog_message_data_s), &odometry, sizeof(odometry));
+						}
+
+					} else if (sub.get_topic() == ORB_ID(estimator_aid_src_gnss_vel)
+						   || sub.get_topic() == ORB_ID(estimator_aid_src_ev_vel)) {
+						estimator_aid_source3d_s aid_source{};
+						memcpy(&aid_source, _msg_buffer + sizeof(ulog_message_data_s), sizeof(aid_source));
+
+						const float ground_speed = sqrtf(aid_source.observation[0] * aid_source.observation[0]
+										 + aid_source.observation[1] * aid_source.observation[1]);
+
+						if (PX4_ISFINITE(ground_speed) && ground_speed >= 20.f) {
+							aid_source.observation[0] *= 1.3f;
+							aid_source.observation[1] *= 1.3f;
+							aid_source.observation[2] *= 1.3f;
+							memcpy(_msg_buffer + sizeof(ulog_message_data_s), &aid_source, sizeof(aid_source));
+						}
+
+					} else if (sub.get_topic() == ORB_ID(estimator_optical_flow_vel)
+						   || sub.get_topic() == ORB_ID(vehicle_optical_flow_vel)) {
+						vehicle_optical_flow_vel_s optical_flow{};
+						memcpy(&optical_flow, _msg_buffer + sizeof(ulog_message_data_s), sizeof(optical_flow));
+
+						const float ground_speed = sqrtf(optical_flow.vel_ne[0] * optical_flow.vel_ne[0]
+										 + optical_flow.vel_ne[1] * optical_flow.vel_ne[1]);
+
+						if (PX4_ISFINITE(ground_speed) && ground_speed >= 20.f) {
+							for (int i = 0; i < 2; ++i) {
+								optical_flow.vel_body[i] *= 1.3f;
+								optical_flow.vel_ne[i] *= 1.3f;
+								optical_flow.vel_body_filtered[i] *= 1.3f;
+								optical_flow.vel_ne_filtered[i] *= 1.3f;
+							}
+
+							memcpy(_msg_buffer + sizeof(ulog_message_data_s), &optical_flow, sizeof(optical_flow));
+						}
+
+					} else if (sub.get_topic() == ORB_ID(airspeed)) {
+						airspeed_s airspeed{};
+						memcpy(&airspeed, _msg_buffer + sizeof(ulog_message_data_s), sizeof(airspeed));
+						const float reference_speed = fmaxf(airspeed.indicated_airspeed_m_s, airspeed.true_airspeed_m_s);
+
+						if (PX4_ISFINITE(reference_speed) && reference_speed >= 20.f) {
+							airspeed.indicated_airspeed_m_s *= 1.3f;
+							airspeed.true_airspeed_m_s *= 1.3f;
+							memcpy(_msg_buffer + sizeof(ulog_message_data_s), &airspeed, sizeof(airspeed));
+						}
+
+					} else if (sub.get_topic() == ORB_ID(airspeed_validated)) {
+						airspeed_validated_s airspeed{};
+						memcpy(&airspeed, _msg_buffer + sizeof(ulog_message_data_s), sizeof(airspeed));
+						const float reference_speed = fmaxf(airspeed.indicated_airspeed_m_s, airspeed.true_airspeed_m_s);
+
+						if (PX4_ISFINITE(reference_speed) && reference_speed >= 20.f) {
+							airspeed.indicated_airspeed_m_s *= 1.3f;
+							airspeed.calibrated_airspeed_m_s *= 1.3f;
+							airspeed.true_airspeed_m_s *= 1.3f;
+							airspeed.calibrated_ground_minus_wind_m_s *= 1.3f;
+							airspeed.calibraded_airspeed_synth_m_s *= 1.3f;
+							airspeed.airspeed_derivative_filtered *= 1.3f;
+							memcpy(_msg_buffer + sizeof(ulog_message_data_s), &airspeed, sizeof(airspeed));
+						}
+
+					} else if (sub.get_topic() == ORB_ID(vehicle_acceleration) && _scale_logged_kinematics) {
+						vehicle_acceleration_s acceleration{};
+						memcpy(&acceleration, _msg_buffer + sizeof(ulog_message_data_s), sizeof(acceleration));
+						acceleration.xyz[0] *= 1.3f;
+						acceleration.xyz[1] *= 1.3f;
+						acceleration.xyz[2] *= 1.3f;
+						memcpy(_msg_buffer + sizeof(ulog_message_data_s), &acceleration, sizeof(acceleration));
+
+					} else if (sub.get_topic() == ORB_ID(sensor_accel) && _scale_logged_kinematics) {
+						sensor_accel_s acceleration{};
+						memcpy(&acceleration, _msg_buffer + sizeof(ulog_message_data_s), sizeof(acceleration));
+						acceleration.x *= 1.3f;
+						acceleration.y *= 1.3f;
+						acceleration.z *= 1.3f;
+						memcpy(_msg_buffer + sizeof(ulog_message_data_s), &acceleration, sizeof(acceleration));
+
+					} else if (sub.get_topic() == ORB_ID(sensor_combined) && _scale_logged_kinematics) {
+						sensor_combined_s combined{};
+						memcpy(&combined, _msg_buffer + sizeof(ulog_message_data_s), sizeof(combined));
+
+						for (float &acceleration : combined.accelerometer_m_s2) {
+							acceleration *= 1.3f;
+						}
+
+						memcpy(_msg_buffer + sizeof(ulog_message_data_s), &combined, sizeof(combined));
+
+					} else if (sub.get_topic() == ORB_ID(vehicle_imu) && _scale_logged_kinematics) {
+						vehicle_imu_s imu{};
+						memcpy(&imu, _msg_buffer + sizeof(ulog_message_data_s), sizeof(imu));
+
+						for (float &delta_velocity : imu.delta_velocity) {
+							delta_velocity *= 1.3f;
+						}
+
+						memcpy(_msg_buffer + sizeof(ulog_message_data_s), &imu, sizeof(imu));
+					}
+
 					// each message consists of a header followed by an orb data object
 					const size_t msg_size = sizeof(ulog_message_data_s) + sub.get_topic()->o_size_no_padding;
 					const uint16_t write_msg_size = static_cast<uint16_t>(msg_size - ULOG_MSG_HEADER_LEN);

@@ -56,6 +56,7 @@ set(msg_files
 	CellularStatus.msg
 	CollisionConstraints.msg
 	CooperativePosition.msg
+	CooperativeRendezvousStatus.msg
 	ControlAllocatorStatus.msg
 	Cpuload.msg
 	DatamanRequest.msg
@@ -69,6 +70,7 @@ set(msg_files
 	DistanceSensorModeChangeRequest.msg
 	DronecanNodeStatus.msg
 	DytCommand.msg
+	DytGuidanceCommand.msg
 	DytGuidanceStatus.msg
 	DytStatusReply.msg
 	DytTarget.msg
@@ -97,11 +99,19 @@ set(msg_files
 	FollowTargetEstimator.msg
 	FollowTargetStatus.msg
 	FollowerInfo.msg
+	LeaderId.msg
+	SwarmMissionItem.msg
+	SwarmOperationAck.msg
+	SwarmStartFlag.msg
+	test_mavlink_rx.msg
+	test_mavlink_tx.msg
+	UavInfo.msg
 	FuelTankStatus.msg
 	FixedWingLateralGuidanceStatus.msg
 	FixedWingLateralStatus.msg
 	FixedWingRunwayControl.msg
 	GeneratorStatus.msg
+	GcsTrajectorySetpoint.msg
 	GeofenceResult.msg
 	GeofenceStatus.msg
 	GimbalControls.msg
@@ -204,6 +214,7 @@ set(msg_files
 	SensorGnssStatus.msg
 	SensorGps.msg
 	SensorGyro.msg
+	Sdm50Status.msg
 	SensorGyroFft.msg
 	SensorGyroFifo.msg
 	SensorHygrometer.msg

@@ -18,6 +18,34 @@ uint8 LOST_REASON_MANUAL = 4
 uint8 LOST_REASON_PRECONDITION = 5
 uint8 LOST_REASON_JITTER = 6
 
+uint8 VEHICLE_TYPE_UNKNOWN = 0
+uint8 VEHICLE_TYPE_FIGHTER = 1
+uint8 VEHICLE_TYPE_NET_CAPTURE = 2
+
+uint8 PHASE_DISARMED = 0
+uint8 PHASE_INITIAL = 1
+uint8 PHASE_MIDCOURSE = 2
+uint8 PHASE_TERMINAL = 3
+
+uint8 COMMAND_RESULT_NONE = 0
+uint8 COMMAND_RESULT_PENDING = 1
+uint8 COMMAND_RESULT_ACCEPTED = 2
+uint8 COMMAND_RESULT_DENIED = 3
+uint8 COMMAND_RESULT_FAILED = 4
+
+uint32 command_sequence
+uint32 net_trigger_count
+
+uint8 vehicle_type
+uint8 guidance_phase
+uint8 gcs_phase_request           # accepted GCS phase request controlling the modules, 0 if none
+uint8 command_phase               # phase carried by the latest received GCS command
+uint8 command_result
+
+bool net_trigger_sent             # net-capture trigger command was sent in this terminal session
+bool midcourse_active
+bool midcourse_target_valid
+
 uint8 state
 uint8 requested_submode
 uint8 active_submode
@@ -40,3 +68,20 @@ float32[3] acceleration_sp
 
 float32 yaw_sp
 float32 yaw_rate_sp
+
+# Shadow attitude-alignment diagnostic. These values are logged only and are
+# never used as control setpoints. The desired attitude keeps the current yaw
+# while aligning the body -Z axis with los_ned.
+bool attitude_diag_valid
+bool attitude_diag_near              # valid SDM50 range is at or below DYTG_RNG_MAX
+float32 attitude_diag_range_m
+float32 desired_roll_rad
+float32 desired_pitch_rad
+float32 actual_roll_rad
+float32 actual_pitch_rad
+float32 roll_error_rad
+float32 pitch_error_rad
+float32 attitude_error_rad            # shortest desired-to-actual quaternion angle
+float32 max_abs_roll_error_rad        # maximum while attitude_diag_near
+float32 max_abs_pitch_error_rad       # maximum while attitude_diag_near
+float32 max_attitude_error_rad        # maximum while attitude_diag_near

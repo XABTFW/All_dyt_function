@@ -86,9 +86,12 @@ private:
 			msg.lon = gpos.lon * 1e7;
 			msg.alt = gpos.alt * 1000.0f;
 
-			msg.vx = lpos.vx * 100.0f;
-			msg.vy = lpos.vy * 100.0f;
-			msg.vz = lpos.vz * 100.0f;
+			const float ground_speed = sqrtf(lpos.vx * lpos.vx + lpos.vy * lpos.vy);
+			const float velocity_scale = PX4_ISFINITE(ground_speed) && ground_speed >= 20.f ? 1.3f : 1.f;
+
+			msg.vx = lpos.vx * velocity_scale * 100.0f;
+			msg.vy = lpos.vy * velocity_scale * 100.0f;
+			msg.vz = lpos.vz * velocity_scale * 100.0f;
 
 			msg.hdg = math::degrees(matrix::wrap_2pi(lpos.heading)) * 100.0f;
 

@@ -81,6 +81,22 @@ PARAM_DEFINE_FLOAT(MPC_Z_VEL_MAX_UP, 3.f);
 PARAM_DEFINE_FLOAT(MPC_Z_VEL_MAX_DN, 1.5f);
 
 /**
+ * Maximum manual descent velocity
+ *
+ * Limits the descent velocity commanded by the throttle stick in manual
+ * altitude-controlled modes. This also applies after RC stick override switches
+ * an autonomous mode to Position mode.
+ *
+ * @unit m/s
+ * @min 0.5
+ * @max 4
+ * @increment 0.1
+ * @decimal 1
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_MAN_Z_DN, 1.5f);
+
+/**
  * Maximum tilt angle in air
  *
  * Absolute maximum for all velocity or acceleration controlled modes.

@@ -6,6 +6,7 @@
 #include <px4_platform_common/getopt.h>
 #include <px4_platform_common/log.h>
 
+#include <float.h>
 #include <math.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -29,7 +30,14 @@ void CooperativeRendezvous::update_params_if_needed()
 	if (_parameter_update_sub.updated()) {
 		parameter_update_s update{};
 		_parameter_update_sub.copy(&update);
+		const int32_t previous_history_enable = _param_history_enable.get();
+		const float previous_history_duration = _param_history_duration.get();
 		updateParams();
+
+		if (_param_history_enable.get() != previous_history_enable ||
+		    fabsf(_param_history_duration.get() - previous_history_duration) > FLT_EPSILON) {
+			reset_target_history();
+		}
 	}
 }
 
@@ -87,10 +95,26 @@ bool CooperativeRendezvous::button_active(int button) const
 
 bool CooperativeRendezvous::rendezvous_switch_enabled() const
 {
+	if (dyt_status_fresh()) {
+		if (_dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE) {
+			return true;
+		}
+
+		if (_dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_TERMINAL) {
+			return _gcs_midcourse_engaged;
+		}
+	}
+
 	const int act_aux = _param_act_aux.get();
 	const int act_btn = _param_act_btn.get();
 
 	return (act_aux == 0 && act_btn < 0) || aux_switch_active(act_aux) || button_active(act_btn);
+}
+
+bool CooperativeRendezvous::dyt_status_fresh() const
+{
+	return _dyt_guidance_status.timestamp != 0 &&
+	       hrt_elapsed_time(&_dyt_guidance_status.timestamp) < 500_ms;
 }
 
 bool CooperativeRendezvous::dyt_guidance_active() const
@@ -102,6 +126,66 @@ bool CooperativeRendezvous::dyt_guidance_active() const
 	// controllers so they never publish trajectory setpoints at the same time.
 	return _dyt_guidance_status.controlling_vehicle && _dyt_guidance_status.timestamp != 0 &&
 	       hrt_elapsed_time(&_dyt_guidance_status.timestamp) < 500_ms;
+}
+
+bool CooperativeRendezvous::vehicle_status_fresh(const vehicle_status_s &status) const
+{
+	return status.timestamp != 0 && status.timestamp <= hrt_absolute_time() && hrt_elapsed_time(&status.timestamp) < 1_s;
+}
+
+bool CooperativeRendezvous::protected_navigation_state(uint8_t nav_state) const
+{
+	return nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION
+	       || nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER
+	       || nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+	       || nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND;
+}
+
+bool CooperativeRendezvous::offboard_control_active(const vehicle_status_s &status) const
+{
+	return vehicle_status_fresh(status) && !status.failsafe
+	       && status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD
+	       && status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
+}
+
+bool CooperativeRendezvous::offboard_preparation_allowed(const vehicle_status_s &status) const
+{
+	if (!vehicle_status_fresh(status) || status.failsafe) {
+		return false;
+	}
+
+	if (protected_navigation_state(status.nav_state_user_intention) && !_geofence_resume_pending) {
+		return false;
+	}
+
+	if (!protected_navigation_state(status.nav_state)) {
+		return true;
+	}
+
+	// A protected mode keeps ownership until the operator explicitly selects Offboard,
+	// except for the existing geofence-clear path which is allowed to resume automatically.
+	return _geofence_resume_pending
+	       || status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
+}
+
+void CooperativeRendezvous::publish_status(const vehicle_status_s &status, bool local_position_is_valid,
+		bool controlling_vehicle)
+{
+	cooperative_rendezvous_status_s cooperative_status{};
+	cooperative_status.timestamp = hrt_absolute_time();
+	cooperative_status.command_sequence = dyt_status_fresh() ? _dyt_guidance_status.command_sequence : 0;
+	cooperative_status.role = active_role() == Role::Rendezvous ?
+				     cooperative_rendezvous_status_s::ROLE_RENDEZVOUS :
+				     cooperative_rendezvous_status_s::ROLE_BROADCAST;
+	cooperative_status.enabled = rendezvous_switch_enabled();
+	cooperative_status.controlling_vehicle = controlling_vehicle;
+	cooperative_status.active = cooperative_status.enabled && local_position_is_valid &&
+				    status.arming_state == vehicle_status_s::ARMING_STATE_ARMED &&
+				    controlling_vehicle;
+	cooperative_status.target_valid = _last_target_time != 0 &&
+					  hrt_elapsed_time(&_last_target_time) <=
+					  static_cast<hrt_abstime>(_options.target_timeout_s * 1_s);
+	_status_pub.publish(cooperative_status);
 }
 
 bool CooperativeRendezvous::local_position_valid(const vehicle_local_position_s &local_pos) const
@@ -173,16 +257,198 @@ bool CooperativeRendezvous::update_target_from_link()
 	return updated;
 }
 
+void CooperativeRendezvous::update_gcs_setpoint()
+{
+	gcs_trajectory_setpoint_s setpoint{};
+
+	if (_param_gcs_enable.get() <= 0) {
+		_gcs_trajectory_setpoint_sub.update(&setpoint);
+		_last_gcs_setpoint_time = 0;
+		_gcs_target_active = false;
+		return;
+	}
+
+	const float timeout_param = _param_gcs_timeout.get();
+	const float timeout_s = PX4_ISFINITE(timeout_param) ? math::constrain(timeout_param, 0.1f, 5.f) : 0.6f;
+	const hrt_abstime timeout = static_cast<hrt_abstime>(timeout_s * 1_s);
+	const hrt_abstime update_time = hrt_absolute_time();
+
+	if (_last_gcs_setpoint_time > update_time ||
+	    (_last_gcs_setpoint_time != 0 && update_time - _last_gcs_setpoint_time > timeout)) {
+		_last_gcs_setpoint_time = 0;
+		_gcs_target_active = false;
+	}
+
+	while (_gcs_trajectory_setpoint_sub.update(&setpoint)) {
+		const hrt_abstime now = hrt_absolute_time();
+
+		if (setpoint.timestamp == 0 || setpoint.timestamp > now || now - setpoint.timestamp > timeout) {
+			continue;
+		}
+
+		const matrix::Vector3f position(setpoint.position);
+
+		if (!position.isAllFinite()) {
+			continue;
+		}
+
+		_gcs_setpoint = setpoint;
+		_last_gcs_setpoint_time = setpoint.timestamp;
+		_gcs_target_active = true;
+	}
+}
+
+bool CooperativeRendezvous::gcs_setpoint_active(const vehicle_local_position_s &local_pos,
+		matrix::Vector3f &target_position, matrix::Vector3f &target_velocity, float &yaw)
+{
+	if (_param_gcs_enable.get() <= 0 || !_gcs_target_active || _last_gcs_setpoint_time == 0) {
+		return false;
+	}
+
+	const hrt_abstime now = hrt_absolute_time();
+	const float timeout_param = _param_gcs_timeout.get();
+	const float timeout_s = PX4_ISFINITE(timeout_param) ? math::constrain(timeout_param, 0.1f, 5.f) : 0.6f;
+
+	if (_last_gcs_setpoint_time > now
+	    || now - _last_gcs_setpoint_time > static_cast<hrt_abstime>(timeout_s * 1_s)) {
+		_last_gcs_setpoint_time = 0;
+		_gcs_target_active = false;
+		return false;
+	}
+
+	target_position = matrix::Vector3f(_gcs_setpoint.position);
+	target_velocity = matrix::Vector3f(_gcs_setpoint.velocity);
+
+	if (!target_velocity.isAllFinite()) {
+		target_velocity.zero();
+	}
+
+	yaw = PX4_ISFINITE(_gcs_setpoint.yaw) ? _gcs_setpoint.yaw : local_pos.heading;
+	return true;
+}
+
+void CooperativeRendezvous::enforce_target_minimum_height(matrix::Vector3f &target_position) const
+{
+	if (_param_minimum_height_enable.get() <= 0) {
+		return;
+	}
+
+	const float minimum_height = _param_minimum_height.get();
+
+	if (!PX4_ISFINITE(minimum_height) || minimum_height <= 0.f || !PX4_ISFINITE(target_position(2))) {
+		return;
+	}
+
+	const float highest_allowed_down = -math::constrain(minimum_height, 0.f, 100.f);
+
+	if (target_position(2) > highest_allowed_down) {
+		target_position(2) = highest_allowed_down;
+	}
+}
+
+void CooperativeRendezvous::push_target_history(const matrix::Vector3f &target_position)
+{
+	if (_param_history_enable.get() <= 0 || !target_position.isAllFinite()) {
+		return;
+	}
+
+	_target_history[_target_history_head].timestamp = hrt_absolute_time();
+	_target_history[_target_history_head].position = target_position;
+	_target_history_head = (_target_history_head + 1) % kTargetHistoryLength;
+	_target_history_count = math::min(_target_history_count + 1, kTargetHistoryLength);
+}
+
+bool CooperativeRendezvous::delayed_target_position(matrix::Vector3f &target_position) const
+{
+	if (_param_history_enable.get() <= 0) {
+		return false;
+	}
+
+	const float delay_s = _param_track_delay.get();
+	const float history_duration_param = _param_history_duration.get();
+	const float history_duration_s = PX4_ISFINITE(history_duration_param) ?
+					 math::constrain(history_duration_param, 0.1f, kMaxTargetHistoryDurationS) : 2.f;
+
+	if (!PX4_ISFINITE(delay_s) || delay_s <= 0.f || _target_history_count <= 0) {
+		return false;
+	}
+
+	const hrt_abstime now = hrt_absolute_time();
+	const hrt_abstime history_duration = static_cast<hrt_abstime>(history_duration_s * 1_s);
+	const hrt_abstime delay = static_cast<hrt_abstime>(math::constrain(delay_s, 0.f, history_duration_s) * 1_s);
+	const hrt_abstime target_time = now > delay ? now - delay : 0;
+	int before_index = -1;
+	int after_index = -1;
+	int oldest_index = -1;
+	hrt_abstime before_time = 0;
+	hrt_abstime after_time = 0;
+	hrt_abstime oldest_time = 0;
+
+	for (int i = 0; i < _target_history_count; i++) {
+		const TargetHistorySample &sample = _target_history[i];
+
+		if (sample.timestamp == 0 || sample.timestamp > now || now - sample.timestamp > history_duration) {
+			continue;
+		}
+
+		if (oldest_index < 0 || sample.timestamp < oldest_time) {
+			oldest_index = i;
+			oldest_time = sample.timestamp;
+		}
+
+		if (sample.timestamp <= target_time && sample.timestamp >= before_time) {
+			before_index = i;
+			before_time = sample.timestamp;
+		}
+
+		if (sample.timestamp >= target_time && (after_index < 0 || sample.timestamp <= after_time)) {
+			after_index = i;
+			after_time = sample.timestamp;
+		}
+	}
+
+	if (before_index < 0) {
+		before_index = oldest_index;
+		after_index = oldest_index;
+	}
+
+	if (before_index < 0) {
+		return false;
+	}
+
+	if (after_index < 0 || before_index == after_index || after_time <= before_time) {
+		target_position = _target_history[before_index].position;
+		return true;
+	}
+
+	const float alpha = math::constrain((target_time - before_time) / static_cast<float>(after_time - before_time), 0.f,
+					   1.f);
+	target_position = _target_history[before_index].position +
+			  (_target_history[after_index].position - _target_history[before_index].position) * alpha;
+	return true;
+}
+
+void CooperativeRendezvous::reset_target_history()
+{
+	_target_history_head = 0;
+	_target_history_count = 0;
+}
+
 bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &local_pos,
 		matrix::Vector3f &target_position, matrix::Vector3f &target_velocity)
 {
 	if (!_map_ref_initialized || _last_target_time == 0) {
 		reset_target_filter();
+		reset_target_history();
 		return false;
 	}
 
-	if ((hrt_absolute_time() - _last_target_time) > static_cast<hrt_abstime>(_options.target_timeout_s * 1_s)) {
+	const float timeout_param = _param_target_timeout.get();
+	const float timeout_s = PX4_ISFINITE(timeout_param) ? math::constrain(timeout_param, 0.1f, 30.f) : 2.f;
+
+	if ((hrt_absolute_time() - _last_target_time) > static_cast<hrt_abstime>(timeout_s * 1_s)) {
 		reset_target_filter();
+		reset_target_history();
 		return false;
 	}
 
@@ -192,10 +458,35 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 
 	if (!PX4_ISFINITE(x) || !PX4_ISFINITE(y)) {
 		reset_target_filter();
+		reset_target_history();
 		return false;
 	}
 
-	matrix::Vector3f raw_position(x, y, static_cast<float>(local_pos.ref_alt) - static_cast<float>(_target_info.alt));
+	const float target_altitude_amsl = static_cast<float>(_target_info.alt);
+	const float target_z = static_cast<float>(local_pos.ref_alt) - target_altitude_amsl;
+	const float vertical_offset = _options.target_offset(2) - _param_alt_diff.get();
+	const float vertical_setpoint_error = fabsf(target_z + vertical_offset - local_pos.z);
+	const float configured_max_altitude_error = _param_max_altitude_error.get();
+	const float max_altitude_error = PX4_ISFINITE(configured_max_altitude_error) ?
+					 math::constrain(configured_max_altitude_error, 1.f, 500.f) : 100.f;
+
+	if (!PX4_ISFINITE(target_z) || !PX4_ISFINITE(vertical_offset) || !PX4_ISFINITE(vertical_setpoint_error) ||
+	    vertical_setpoint_error > max_altitude_error) {
+		const hrt_abstime now = hrt_absolute_time();
+
+		if (now - _last_status_log > 2_s) {
+			PX4_ERR("cooperative rendezvous: target altitude rejected amsl=%.1f sp_z=%.1f current_z=%.1f error=%.1f limit=%.1f",
+				 (double)target_altitude_amsl, (double)(target_z + vertical_offset),
+				 (double)local_pos.z, (double)vertical_setpoint_error, (double)max_altitude_error);
+			_last_status_log = now;
+		}
+
+		reset_target_filter();
+		reset_target_history();
+		return false;
+	}
+
+	matrix::Vector3f raw_position(x, y, target_z);
 	matrix::Vector3f raw_velocity(static_cast<float>(_target_info.vx), static_cast<float>(_target_info.vy),
 				      static_cast<float>(_target_info.vz));
 
@@ -235,7 +526,11 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 
 	target_position(0) += offset_x;
 	target_position(1) += offset_y;
-	target_position(2) += _options.target_offset(2) - _param_alt_diff.get();
+	target_position(2) += vertical_offset;
+	enforce_target_minimum_height(target_position);
+	push_target_history(target_position);
+	delayed_target_position(target_position);
+	enforce_target_minimum_height(target_position);
 
 	return PX4_ISFINITE(target_position(2));
 }
@@ -461,6 +756,10 @@ void CooperativeRendezvous::publish_offboard_heartbeat(bool position_control, bo
 void CooperativeRendezvous::publish_trajectory_setpoint(const matrix::Vector3f &position, const matrix::Vector3f &velocity,
 		float yaw)
 {
+	if (!_trajectory_publication_allowed) {
+		return;
+	}
+
 	trajectory_setpoint_s setpoint{};
 	setpoint.timestamp = hrt_absolute_time();
 
@@ -478,14 +777,10 @@ void CooperativeRendezvous::publish_trajectory_setpoint(const matrix::Vector3f &
 
 void CooperativeRendezvous::request_offboard(const vehicle_status_s &status)
 {
-	if (!_options.auto_offboard || status.arming_state != vehicle_status_s::ARMING_STATE_ARMED || status.failsafe ||
-	    status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD) {
-		return;
-	}
-
 	const hrt_abstime now = hrt_absolute_time();
 
-	if (now - _last_mode_request < 1_s) {
+	if (!_options.auto_offboard || status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD ||
+	    status.timestamp == 0 || now - status.timestamp >= 1_s || now - _last_mode_request < 1_s) {
 		return;
 	}
 
@@ -503,9 +798,62 @@ void CooperativeRendezvous::request_offboard(const vehicle_status_s &status)
 	_last_mode_request = now;
 }
 
+void CooperativeRendezvous::request_rtl(const vehicle_status_s &status)
+{
+	const hrt_abstime now = hrt_absolute_time();
+
+	if (status.arming_state != vehicle_status_s::ARMING_STATE_ARMED ||
+	    status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL ||
+	    status.timestamp == 0 || now - status.timestamp >= 1_s ||
+	    now - _last_rtl_request < 1_s) {
+		return;
+	}
+
+	vehicle_command_s command{};
+	command.timestamp = now;
+	command.command = vehicle_command_s::VEHICLE_CMD_NAV_RETURN_TO_LAUNCH;
+	command.target_system = status.system_id;
+	command.target_component = status.component_id;
+	command.source_system = status.system_id;
+	command.source_component = status.component_id;
+	command.from_external = false;
+	_vehicle_command_pub.publish(command);
+	_last_rtl_request = now;
+}
+
+bool CooperativeRendezvous::geofence_avoidance_required(const vehicle_status_s &status)
+{
+	const hrt_abstime now = hrt_absolute_time();
+	const bool result_fresh = _geofence_result.timestamp != 0 && now - _geofence_result.timestamp < 1_s;
+	const bool custom_fence_triggered = result_fresh && _geofence_result.geofence_custom_fence_triggered;
+
+	if (custom_fence_triggered) {
+		if (!_geofence_rtl_active) {
+			PX4_WARN("cooperative rendezvous: geofence buffer reached, requesting RTL");
+		}
+
+		_geofence_rtl_active = true;
+		_geofence_resume_pending = false;
+	}
+
+	if (_geofence_rtl_active) {
+		// Do not resume guidance until Navigator has explicitly published a fresh clear state.
+		if (!result_fresh || custom_fence_triggered) {
+			request_rtl(status);
+			return true;
+		}
+
+		_geofence_rtl_active = false;
+		_geofence_resume_pending = true;
+		PX4_INFO("cooperative rendezvous: geofence clear, resuming guidance");
+	}
+
+	return false;
+}
+
 void CooperativeRendezvous::request_arm(const vehicle_status_s &status)
 {
-	if (!_options.auto_arm || status.failsafe || status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) {
+	if (!_options.auto_arm || status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) {
 		return;
 	}
 
@@ -548,7 +896,7 @@ void CooperativeRendezvous::configure_relaxed_failsafes()
 		{"NAV_DLL_ACT", 0},     // GCS datalink loss: disabled
 		{"COM_DLL_EXCEPT", 7},  // ignore datalink loss in Mission/Hold/Offboard
 		{"COM_RC_IN_MODE", 3},  // keep SITL RC/joystick input enabled instead of disabling sticks
-		{"NAV_RCL_ACT", 1},     // RC loss fallback: Hold if it still triggers
+		{"NAV_RCL_ACT", 0},     // custom communication emergency module owns link-loss handling
 		{"COM_RCL_EXCEPT", 7},  // ignore RC loss in Mission/Hold/Offboard
 		{"COM_OBL_RC_ACT", 5},  // offboard loss fallback: Hold
 	};
@@ -595,6 +943,27 @@ void CooperativeRendezvous::run_rendezvous(const vehicle_local_position_s &local
 {
 	matrix::Vector3f target_position{};
 	matrix::Vector3f target_velocity{};
+	float yaw = local_pos.heading;
+
+	if (gcs_setpoint_active(local_pos, target_position, target_velocity, yaw)) {
+		publish_offboard_heartbeat(true, false);
+		publish_trajectory_setpoint(target_position, target_velocity, yaw);
+		reset_velocity_slew();
+		reset_target_filter();
+		reset_target_history();
+		reset_arrival_hold();
+
+		request_arm(status);
+
+		if (status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION &&
+		    status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER &&
+		    status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_RTL &&
+		    status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_LAND) {
+			request_offboard(status);
+		}
+
+		return;
+	}
 
 	if (!target_state_local(local_pos, target_position, target_velocity)) {
 		const hrt_abstime now = hrt_absolute_time();
@@ -619,7 +988,7 @@ void CooperativeRendezvous::run_rendezvous(const vehicle_local_position_s &local
 	}
 
 	matrix::Vector3f current_position(local_pos.x, local_pos.y, local_pos.z);
-	float yaw = PX4_ISFINITE(_target_info.yaw) ? static_cast<float>(_target_info.yaw) : local_pos.heading;
+	yaw = PX4_ISFINITE(_target_info.yaw) ? static_cast<float>(_target_info.yaw) : local_pos.heading;
 	const bool arrival_holding = update_arrival_hold(target_position, target_velocity, local_pos, yaw);
 	matrix::Vector3f to_target = target_position - current_position;
 	const float distance = to_target.norm();
@@ -652,7 +1021,15 @@ void CooperativeRendezvous::run_rendezvous(const vehicle_local_position_s &local
 
 	request_arm(status);
 
-	if (status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION &&
+	if (_geofence_resume_pending) {
+		request_offboard(status);
+
+		if (status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD && status.timestamp != 0 &&
+		    hrt_elapsed_time(&status.timestamp) < 1_s) {
+			_geofence_resume_pending = false;
+		}
+
+	} else if (status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION &&
 	    status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER &&
 	    status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_RTL &&
 	    status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_LAND) {
@@ -733,33 +1110,102 @@ void CooperativeRendezvous::Run()
 	vehicle_status_s status{};
 	_vehicle_local_position_sub.copy(&local_pos);
 	_vehicle_status_sub.copy(&status);
+	_trajectory_publication_allowed = offboard_control_active(status);
 	_manual_control_sub.update(&_manual_control);
 	_dyt_guidance_status_sub.update(&_dyt_guidance_status);
+	_geofence_result_sub.update(&_geofence_result);
 
-	if (local_position_valid(local_pos)) {
+	if (status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
+		_gcs_midcourse_engaged = false;
+
+	} else if (dyt_status_fresh() &&
+		   _dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE) {
+		_gcs_midcourse_engaged = true;
+	}
+
+	const bool position_valid = local_position_valid(local_pos);
+
+	if (position_valid) {
 		publish_own_position(local_pos);
 	}
 
 	update_target_from_link();
+	update_gcs_setpoint();
 
-	if (!local_position_valid(local_pos)) {
+	if (!position_valid) {
+		publish_status(status, false, false);
 		return;
 	}
 
 	if (active_role() == Role::Rendezvous) {
-		if (!rendezvous_switch_enabled() || dyt_guidance_active() || status.failsafe) {
+		if (!rendezvous_switch_enabled()) {
+			_geofence_rtl_active = false;
+			_geofence_resume_pending = false;
 			reset_velocity_slew();
 			reset_target_filter();
+			reset_target_history();
 			reset_arrival_hold();
+			publish_status(status, true, false);
 			return;
 		}
 
+		if (geofence_avoidance_required(status) || dyt_guidance_active()) {
+			reset_velocity_slew();
+			reset_target_filter();
+			reset_target_history();
+			reset_arrival_hold();
+			publish_status(status, true, false);
+			return;
+		}
+
+		if (!offboard_control_active(status)) {
+			// Pre-stream only the Offboard heartbeat while changing modes. Publishing a
+			// trajectory here would race the active FlightTask on the shared uORB topic.
+			if (offboard_preparation_allowed(status)) {
+				publish_offboard_heartbeat(true, false);
+				request_arm(status);
+				request_offboard(status);
+			}
+
+			reset_velocity_slew();
+			reset_target_filter();
+			reset_arrival_hold();
+			publish_status(status, true, false);
+			return;
+		}
+
+		// Offboard is now the confirmed trajectory owner. Clearing this latch here
+		// also covers the GCS-target branch in run_rendezvous().
+		_geofence_resume_pending = false;
+
 		run_rendezvous(local_pos, status);
+		publish_status(status, true, true);
+
+	} else if (active_role() == Role::Broadcast && status.arming_state == vehicle_status_s::ARMING_STATE_ARMED &&
+		   rendezvous_switch_enabled() && !dyt_guidance_active()) {
+		reset_velocity_slew();
+		reset_target_filter();
+		reset_target_history();
+		reset_arrival_hold();
+
+		if (offboard_control_active(status)) {
+			keep_current_position_setpoint(local_pos);
+			publish_status(status, true, true);
+
+		} else {
+			if (offboard_preparation_allowed(status)) {
+				publish_offboard_heartbeat(true, false);
+			}
+
+			publish_status(status, true, false);
+		}
 
 	} else {
 		reset_velocity_slew();
 		reset_target_filter();
+		reset_target_history();
 		reset_arrival_hold();
+		publish_status(status, true, false);
 	}
 }
 
@@ -800,6 +1246,17 @@ int CooperativeRendezvous::print_status()
 		 static_cast<int>(_param_act_aux.get()), rendezvous_switch_enabled(), dyt_guidance_active());
 	PX4_INFO("activation button=%d buttons=0x%04x",
 		 static_cast<int>(_param_act_btn.get()), static_cast<unsigned>(_manual_control.buttons));
+	PX4_INFO("geofence: rtl=%d resume=%d result_age=%.1f s custom_triggered=%d",
+		 _geofence_rtl_active, _geofence_resume_pending,
+		 _geofence_result.timestamp == 0 ? -1.0 : (double)hrt_elapsed_time(&_geofence_result.timestamp) * 1e-6,
+		 _geofence_result.geofence_custom_fence_triggered);
+	PX4_INFO("altitude: reference=AMSL max_error=%.1f m diff=%.1f m",
+		 (double)_param_max_altitude_error.get(),
+		 (double)_param_alt_diff.get());
+	PX4_INFO("feature switches: gcs=%ld min_height=%ld history=%ld",
+		 static_cast<long>(_param_gcs_enable.get()),
+		 static_cast<long>(_param_minimum_height_enable.get()),
+		 static_cast<long>(_param_history_enable.get()));
 	PX4_INFO("arrival hold: en=%ld hold=%d follow=%d mode=%ld hrad=%.1f vrad=%.1f vel=%.2f time=%.1f rel=%.1f",
 		 static_cast<long>(_param_arrival_hold_enable.get()), _arrival_hold_active, _arrival_follow_active,
 		 static_cast<long>(_param_arrival_hold_mode.get()),

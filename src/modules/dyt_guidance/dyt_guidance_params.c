@@ -1,4 +1,19 @@
 /**
+ * DYT aircraft role
+ *
+ * Identifies the aircraft to the ground station. Auto maps MAV_SYS_ID 2 to the
+ * net-capture aircraft and all other IDs to the fighter aircraft.
+ *
+ * @value 0 Auto from MAV_SYS_ID
+ * @value 1 Fighter aircraft
+ * @value 2 Net-capture aircraft
+ * @min 0
+ * @max 2
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYT_VEH_TYPE, 0);
+
+/**
  * Terminal guidance activation AUX channel
  *
  * Enables DYT visual guidance to take over aircraft motion after seeker lock.
@@ -529,11 +544,67 @@ PARAM_DEFINE_FLOAT(DYTG_RNG_MIN, 0.f);
 PARAM_DEFINE_FLOAT(DYTG_RNG_MAX, 0.f);
 
 /**
+ * Net release pitch action duration
+ *
+ * Duration of the adaptive aircraft pitch action after the manual or SDM50
+ * range trigger. The gripper PWM release is delayed until this action has
+ * completed. Set to 0 to release immediately without the pitch action.
+ *
+ * @unit ms
+ * @min 0
+ * @max 2000
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYTG_SZ_MS, 300);
+
+/**
+ * Adaptive net release pitch gain
+ *
+ * Gain applied to velocity elevation minus body -Z launch-axis elevation.
+ * This is copied from the reference net-capture pitch action. A negative value
+ * reverses the correction direction.
+ *
+ * @min -10.0
+ * @max 10.0
+ * @decimal 2
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_ALP_K, 1.0f);
+
+/**
+ * Maximum net release pitch correction
+ *
+ * Limits the equivalent nose-up or nose-down correction generated before the
+ * gripper PWM release. The absolute value is used as the limit.
+ *
+ * @unit deg
+ * @min 0.0
+ * @max 60.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_ALP_MAX, 10.0f);
+
+/**
+ * Minimum speed for net release pitch correction
+ *
+ * Below this 3-D ground speed the adaptive pitch correction is zero, while the
+ * delayed release timing still runs normally.
+ *
+ * @unit m/s
+ * @min 0.1
+ * @max 10.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_ALP_VMIN, 1.0f);
+
+/**
  * Manual net release AUX channel
  *
- * Sends the same gripper release command as the automatic distance trigger
- * from an operator switch rising edge. This bypasses the laser distance window
- * and is intended for manual visual confirmation of the target.
+ * Starts the same adaptive pitch action and delayed gripper release sequence as
+ * the automatic distance trigger. This bypasses the laser distance window and
+ * is intended for manual visual confirmation of the target.
  *
  * @value -1 Disabled
  * @value 1 AUX1
@@ -549,9 +620,9 @@ PARAM_DEFINE_INT32(DYTG_FIRE_AUX, -1);
 /**
  * Manual net release joystick button
  *
- * Sends the same gripper release command as the automatic distance trigger
- * from a joystick button rising edge. Button numbers match the zero-based
- * numbering shown by QGroundControl.
+ * Starts the same adaptive pitch action and delayed gripper release sequence as
+ * the automatic distance trigger. Button numbers match the zero-based numbering
+ * shown by QGroundControl.
  *
  * @value -1 Disabled
  * @min -1
@@ -563,9 +634,9 @@ PARAM_DEFINE_INT32(DYTG_FIRE_BTN, -1);
 /**
  * Enable distance-triggered net release
  *
- * When enabled, DYT guidance automatically sends a gripper release command when
- * a fresh, valid forward-facing laser measurement lies between DYTG_RNG_MIN and
- * DYTG_RNG_MAX. Both range parameters must be configured to enable the trigger.
+ * When enabled, a fresh valid forward-facing laser measurement between
+ * DYTG_RNG_MIN and DYTG_RNG_MAX starts the adaptive pitch action. The gripper
+ * release command is sent after DYTG_SZ_MS. Both range parameters must be set.
  *
  * @boolean
  * @group DYT Guidance

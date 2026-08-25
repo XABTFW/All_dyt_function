@@ -3,7 +3,7 @@ uint64 timestamp  # time since system start (microseconds)
 uint32 mavid      #mavid
 float64 lat       # follower position (deg * 1e7)
 float64 lon       # follower position (deg * 1e7)
-float64 alt       # follower  altitude (m)
+float64 alt       # follower altitude AMSL (m)
 float64 vx	  	  # follower velocity of vx
 float64 vy	  	  # follower velocity of vy
 float64 vz	  	  # follower velocity of vz

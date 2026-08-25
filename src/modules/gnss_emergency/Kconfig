@@ -1,0 +1,5 @@
+menuconfig MODULES_GNSS_EMERGENCY
+	bool "gnss_emergency"
+	default n
+	---help---
+		GNSS jamming, spoofing and loss descent with mission recovery.

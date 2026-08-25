@@ -53,6 +53,7 @@
 #include <lib/stick_yaw/StickYaw.hpp>
 #include <lib/weather_vane/WeatherVane.hpp>
 #include "StickAccelerationXY.hpp"
+#include "RtlHorizontalConstraints.hpp"
 
 /**
  * This enum has to agree with position_setpoint_s type definition
@@ -151,6 +152,8 @@ protected:
 	WaypointType _type_previous{WaypointType::idle}; /**< Previous type of current target triplet. */
 	bool _is_emergency_braking_active{false};
 	bool _want_takeoff{false};
+	bool _rtl_xy_constraints_active{false};
+	bool _rtl_xy_altitude_valid{false};
 
 	DEFINE_PARAMETERS_CUSTOM_PARENT(FlightTask,
 					(ParamFloat<px4::params::MPC_XY_CRUISE>) _param_mpc_xy_cruise,
@@ -176,7 +179,11 @@ protected:
 					(ParamFloat<px4::params::MPC_Z_V_AUTO_UP>) _param_mpc_z_v_auto_up,
 					(ParamFloat<px4::params::MPC_Z_V_AUTO_DN>) _param_mpc_z_v_auto_dn,
 					(ParamFloat<px4::params::MPC_TKO_SPEED>) _param_mpc_tko_speed,
-					(ParamFloat<px4::params::MPC_TKO_RAMP_T>) _param_mpc_tko_ramp_t
+					(ParamFloat<px4::params::MPC_TKO_RAMP_T>) _param_mpc_tko_ramp_t,
+					(ParamFloat<px4::params::RTL_XY_SPEED>) _param_rtl_xy_speed,
+					(ParamFloat<px4::params::RTL_XY_ACC>) _param_rtl_xy_acc,
+					(ParamFloat<px4::params::RTL_XY_JERK>) _param_rtl_xy_jerk,
+					(ParamFloat<px4::params::RTL_XY_ALT>) _param_rtl_xy_alt
 				       );
 
 private:

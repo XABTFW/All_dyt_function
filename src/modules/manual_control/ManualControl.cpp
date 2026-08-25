@@ -41,6 +41,7 @@ ManualControl::ManualControl() :
 	ModuleParams(nullptr),
 	ScheduledWorkItem(MODULE_NAME, px4::wq_configurations::hp_default)
 {
+	_stick_override_hysteresis.set_hysteresis_time_from(false, STICK_OVERRIDE_CONFIRMATION_TIME);
 	updateParams();
 }
 
@@ -112,14 +113,14 @@ void ManualControl::processInput(hrt_abstime now)
 
 		processStickArming(_selector.setpoint());
 
-		// User override by stick
-		const float dt_s = (now - _timestamp_last_loop) / 1e6f;
-		const float minimum_stick_change = 0.01f * _param_com_rc_stick_ov.get();
-
-		_selector.setpoint().sticks_moving = (fabsf(_roll_diff.update(_selector.setpoint().roll, dt_s)) > minimum_stick_change)
-						     || (fabsf(_pitch_diff.update(_selector.setpoint().pitch, dt_s)) > minimum_stick_change)
-						     || (fabsf(_yaw_diff.update(_selector.setpoint().yaw, dt_s)) > minimum_stick_change)
-						     || (fabsf(_throttle_diff.update(_selector.setpoint().throttle, dt_s)) > minimum_stick_change);
+		// User override by directional stick. Ignore throttle-only changes because the throttle is commonly
+		// left low during autonomous flight and receiver jitter must not abort the active mission.
+		const float minimum_stick_deflection = 0.01f * _param_com_rc_stick_ov.get();
+		const bool directional_stick_deflected = fabsf(_selector.setpoint().roll) > minimum_stick_deflection
+				|| fabsf(_selector.setpoint().pitch) > minimum_stick_deflection
+				|| fabsf(_selector.setpoint().yaw) > minimum_stick_deflection;
+		_stick_override_hysteresis.set_state_and_update(directional_stick_deflected, now);
+		_selector.setpoint().sticks_moving = _stick_override_hysteresis.get_state();
 
 		_selector.setpoint().timestamp = now;
 		_manual_control_setpoint_pub.publish(_selector.setpoint());
@@ -148,10 +149,7 @@ void ManualControl::processInput(hrt_abstime now)
 			_manual_control_setpoint_pub.publish(_selector.setpoint());
 		}
 
-		_roll_diff.reset();
-		_pitch_diff.reset();
-		_yaw_diff.reset();
-		_throttle_diff.reset();
+		_stick_override_hysteresis.set_state_and_update(false, now);
 		_stick_arm_hysteresis.set_state_and_update(false, now);
 		_stick_disarm_hysteresis.set_state_and_update(false, now);
 		_stick_kill_hysteresis.set_state_and_update(false, now);
@@ -160,7 +158,6 @@ void ManualControl::processInput(hrt_abstime now)
 
 	processSwitches(now);
 
-	_timestamp_last_loop = now;
 }
 
 void ManualControl::processSwitches(hrt_abstime &now)

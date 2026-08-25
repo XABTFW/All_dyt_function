@@ -7,7 +7,9 @@
 #include <px4_platform_common/px4_config.h>
 #include <px4_platform_common/module.h>
 #include <px4_platform_common/px4_work_queue/ScheduledWorkItem.hpp>
+#include <uORB/Publication.hpp>
 #include <uORB/topics/distance_sensor.h>
+#include <uORB/topics/sdm50_status.h>
 
 using namespace time_literals;
 
@@ -48,6 +50,7 @@ private:
 	static constexpr unsigned RAW_DUMP_SIZE{32};
 
 	PX4Rangefinder _px4_rangefinder;
+	uint32_t _device_id{0};
 	char _port[20]{};
 	int _fd{-1};
 	ParseState _parse_state{ParseState::WaitHeader};
@@ -62,6 +65,10 @@ private:
 	px4::atomic<uint8_t> _rx_tail[RAW_DUMP_SIZE];
 	hrt_abstime _last_open_attempt{0};
 	hrt_abstime _last_start_command{0};
+	hrt_abstime _last_velocity_sample{0};
+	float _last_velocity_distance_m{NAN};
+	float _closing_speed_m_s{NAN};
+	uORB::Publication<sdm50_status_s> _sdm50_status_pub{ORB_ID(sdm50_status)};
 	perf_counter_t _sample_perf{perf_alloc(PC_COUNT, MODULE_NAME ": samples")};
 	perf_counter_t _comms_errors{perf_alloc(PC_COUNT, MODULE_NAME ": communication errors")};
 };

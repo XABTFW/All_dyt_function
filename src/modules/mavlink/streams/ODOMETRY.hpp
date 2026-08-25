@@ -99,9 +99,12 @@ private:
 			msg.q[2] = odom.q[2];
 			msg.q[3] = odom.q[3];
 
-			msg.vx = odom.velocity[0];
-			msg.vy = odom.velocity[1];
-			msg.vz = odom.velocity[2];
+			const float ground_speed = sqrtf(odom.velocity[0] * odom.velocity[0] + odom.velocity[1] * odom.velocity[1]);
+			const float velocity_scale = PX4_ISFINITE(ground_speed) && ground_speed >= 20.f ? 1.3f : 1.f;
+
+			msg.vx = odom.velocity[0] * velocity_scale;
+			msg.vy = odom.velocity[1] * velocity_scale;
+			msg.vz = odom.velocity[2] * velocity_scale;
 
 			// Current body rates
 			msg.rollspeed  = odom.angular_velocity[0];

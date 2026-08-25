@@ -200,3 +200,67 @@ PARAM_DEFINE_INT32(RTL_TIME_MARGIN, 100);
  * @group Return To Land
  */
 PARAM_DEFINE_INT32(RTL_APPR_FORCE, 0);
+
+/**
+ * RTL horizontal cruise speed
+ *
+ * Horizontal cruise speed used by rotary-wing vehicles in RTL. A value less
+ * than or equal to zero keeps the existing cruise speed source. The effective
+ * speed is always limited by MPC_XY_VEL_MAX.
+ *
+ * @unit m/s
+ * @min -1
+ * @max 100
+ * @decimal 1
+ * @increment 0.5
+ * @group Return Mode
+ */
+PARAM_DEFINE_FLOAT(RTL_XY_SPEED, -1.f);
+
+/**
+ * RTL horizontal acceleration limit
+ *
+ * Horizontal acceleration limit used by rotary-wing vehicles in RTL. A value
+ * less than or equal to zero keeps MPC_ACC_HOR.
+ *
+ * @unit m/s^2
+ * @min -1
+ * @max 15
+ * @decimal 1
+ * @increment 0.5
+ * @group Return Mode
+ */
+PARAM_DEFINE_FLOAT(RTL_XY_ACC, -1.f);
+
+/**
+ * RTL horizontal jerk limit
+ *
+ * Horizontal jerk limit used by rotary-wing vehicles in RTL. A value less
+ * than or equal to zero keeps MPC_JERK_AUTO. The vertical jerk limit is not
+ * changed.
+ *
+ * @unit m/s^3
+ * @min -1
+ * @max 80
+ * @decimal 1
+ * @increment 0.5
+ * @group Return Mode
+ */
+PARAM_DEFINE_FLOAT(RTL_XY_JERK, -1.f);
+
+/**
+ * RTL horizontal constraint activation altitude
+ *
+ * Height above ground or Home below which RTL_XY_SPEED, RTL_XY_ACC and
+ * RTL_XY_JERK become active. Once active, the constraints remain active for
+ * the rest of the current RTL. A value less than or equal to zero applies the
+ * constraints throughout RTL, preserving the previous behavior.
+ *
+ * @unit m
+ * @min -1
+ * @max 100
+ * @decimal 1
+ * @increment 0.5
+ * @group Return Mode
+ */
+PARAM_DEFINE_FLOAT(RTL_XY_ALT, -1.f);

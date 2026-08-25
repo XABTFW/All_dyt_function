@@ -15,6 +15,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "DytPixelLos.hpp"
+
 #include <lib/mathlib/mathlib.h>
 #include <px4_platform_common/getopt.h>
 #include <px4_platform_common/log.h>
@@ -80,6 +82,8 @@ private:
 	static constexpr uint8_t TRACKER_ASSIST_DISABLE{0x25};
 	static constexpr uint8_t TRACKER_TARGET_ID{0x26};
 	static constexpr uint8_t TRACKER_IMAGE_MODE{0x37};
+	static constexpr uint8_t TRACKER_OSD_ENABLE{0x07};
+	static constexpr uint8_t TRACKER_OSD_DISABLE{0x08};
 	static constexpr uint8_t LASER_POWER_ON{0x01};
 	static constexpr uint8_t LASER_POWER_OFF{0x02};
 	static constexpr uint8_t LASER_CONTINUOUS_ON{0x05};
@@ -107,7 +111,7 @@ private:
 
 	void handle_command_updates();
 	void send_protocol_command(const dyt_command_s &cmd);
-	void send_mode_once();
+	bool send_mode_once();
 	void set_mode(uint8_t control);
 	void set_angle_mode(float yaw_deg, float pitch_deg);
 	void set_tracking_mode(int16_t x_px, int16_t y_px);
@@ -167,6 +171,8 @@ private:
 	uint8_t _mode_params[20]{};
 	float _visible_zoom{NAN};
 	float _infrared_zoom{NAN};
+	float _visible_horizontal_fov_deg{NAN};
+	float _infrared_horizontal_fov_deg{NAN};
 	float _last_range_m{NAN};
 	bool _startup_home_sent{false};
 
@@ -189,6 +195,10 @@ private:
 		(ParamFloat<px4::params::DYT_HOME_YAW>) _param_dyt_home_yaw_deg,
 		(ParamFloat<px4::params::DYT_HOME_PIT>) _param_dyt_home_pitch_deg,
 		(ParamFloat<px4::params::DYT_LOS_SC>) _param_dyt_los_scale_deg,
+		(ParamInt<px4::params::DYT_VIS_W>) _param_dyt_visible_width_px,
+		(ParamInt<px4::params::DYT_VIS_H>) _param_dyt_visible_height_px,
+		(ParamInt<px4::params::DYT_IR_W>) _param_dyt_infrared_width_px,
+		(ParamInt<px4::params::DYT_IR_H>) _param_dyt_infrared_height_px,
 		(ParamInt<px4::params::DYT_TRK_VAL>) _param_dyt_tracking_value
 	)
 };
@@ -233,10 +243,14 @@ void DytGimbal::show_status()
 		 static_cast<unsigned long>(_frame_id_count[2]), static_cast<unsigned long>(_frame_id_count[3]),
 		 static_cast<unsigned long>(_frame_id_count[4]), static_cast<unsigned long>(_frame_id_count[6]),
 		 static_cast<unsigned long>(_frame_id_count[7]));
-	PX4_INFO("last servo: %.3f s raw tracking: 0x%02x lock value: 0x%02lx los scale: %.6f deg/count",
+	PX4_INFO("last servo: %.3f s raw tracking: 0x%02x lock value: 0x%02lx manual LOS scale: %.6f deg/px",
 		 static_cast<double>(_last_servo_time > 0 ? (hrt_absolute_time() - _last_servo_time) * 1e-6 : -1.0),
 		 static_cast<unsigned>(_last_raw_tracking_state), static_cast<unsigned long>(_param_dyt_tracking_value.get()),
 		 static_cast<double>(_param_dyt_los_scale_deg.get()));
+	PX4_INFO("LOS cameras: VIS %.1f deg %ldx%ld IR %.1f deg %ldx%ld",
+		 static_cast<double>(_visible_horizontal_fov_deg), static_cast<long>(_param_dyt_visible_width_px.get()),
+		 static_cast<long>(_param_dyt_visible_height_px.get()), static_cast<double>(_infrared_horizontal_fov_deg),
+		 static_cast<long>(_param_dyt_infrared_width_px.get()), static_cast<long>(_param_dyt_infrared_height_px.get()));
 	PX4_INFO("mode control: 0x%02x tx: %lu last command: %u write result/errno: %d/%d",
 		 static_cast<unsigned>(_mode_control), static_cast<unsigned long>(_command_tx_count),
 		 static_cast<unsigned>(_last_command), _last_write_result, _last_write_errno);
@@ -309,6 +323,10 @@ bool DytGimbal::open_serial()
 
 	reset_parser();
 	_last_servo_time = 0;
+	_visible_horizontal_fov_deg = NAN;
+	_infrared_horizontal_fov_deg = NAN;
+	_visible_zoom = NAN;
+	_infrared_zoom = NAN;
 	_mode_control = MODE_DISABLE;
 	memset(_mode_params, 0, sizeof(_mode_params));
 	_startup_home_sent = false;
@@ -516,8 +534,9 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.status1 = frame[6];
 	target.status2 = frame[31];
 	target.status3 = frame[5];
-	target.video_source = frame[5] == 0x02 ? dyt_target_s::VIDEO_SOURCE_IR_1 : dyt_target_s::VIDEO_SOURCE_VIS_1;
-	target.zoom_ratio = frame[5] == 0x02 ? _infrared_zoom : _visible_zoom;
+	const bool infrared_source = frame[5] == 0x02;
+	target.video_source = infrared_source ? dyt_target_s::VIDEO_SOURCE_IR_1 : dyt_target_s::VIDEO_SOURCE_VIS_1;
+	target.zoom_ratio = infrared_source ? _infrared_zoom : _visible_zoom;
 
 	target.gimbal_yaw_rate_rad_s = math::radians(read_be_float(frame, 7));
 	target.gimbal_pitch_rate_rad_s = math::radians(read_be_float(frame, 11));
@@ -527,12 +546,15 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.gimbal_pitch_rad = target.gimbal_pitch_frame_rad;
 	target.gimbal_roll_rad = math::radians(read_be_float(frame, 27));
 
-	const float los_scale_deg = _param_dyt_los_scale_deg.get();
-	const bool los_scale_valid = PX4_ISFINITE(los_scale_deg) && los_scale_deg > 0.f;
 	const int16_t raw_los_x = read_be_s16(frame, 32);
 	const int16_t raw_los_y = read_be_s16(frame, 34);
-	target.los_x_rad = los_scale_valid ? math::radians(static_cast<float>(raw_los_x) * los_scale_deg) : NAN;
-	target.los_y_rad = los_scale_valid ? math::radians(static_cast<float>(raw_los_y) * los_scale_deg) : NAN;
+	const float horizontal_fov_deg = infrared_source ? _infrared_horizontal_fov_deg : _visible_horizontal_fov_deg;
+	const int32_t image_width_px = infrared_source ? _param_dyt_infrared_width_px.get() :
+				       _param_dyt_visible_width_px.get();
+	const int32_t image_height_px = infrared_source ? _param_dyt_infrared_height_px.get() :
+					_param_dyt_visible_height_px.get();
+	const bool los_valid = dyt::pixelMissToLos(raw_los_x, raw_los_y, horizontal_fov_deg, image_width_px,
+			       image_height_px, _param_dyt_los_scale_deg.get(), target.los_x_rad, target.los_y_rad);
 
 	_last_raw_tracking_state = frame[31];
 	const int32_t tracking_value = _param_dyt_tracking_value.get();
@@ -542,7 +564,7 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.tracking_state = lock_reported ? dyt_target_s::TRACKING_STATE_LOCKED : dyt_target_s::TRACKING_STATE_SEARCH;
 	// Report the payload lock independently, but only expose a guidance-valid target
 	// when the pixel miss distance can be converted to a finite angular LOS.
-	target.target_valid = lock_reported && los_scale_valid;
+	target.target_valid = lock_reported && los_valid;
 	target.auto_hint = false;
 	target.follow_mode = frame[6] == MODE_FOLLOW_ANGLE;
 	target.motor_on = frame[6] != MODE_DISABLE;
@@ -576,12 +598,17 @@ void DytGimbal::handle_payload_status(const uint8_t *frame, size_t frame_len, hr
 		return;
 	}
 
+	const float horizontal_fov_deg = static_cast<float>(read_be_u16(frame, 5)) * 0.1f;
 	const float zoom = static_cast<float>(read_be_u16(frame, 7)) * 0.1f;
+	const float valid_horizontal_fov_deg = horizontal_fov_deg > 0.f && horizontal_fov_deg < 179.f ?
+					       horizontal_fov_deg : NAN;
 
 	if (frame[3] == FRAME_ID_VISIBLE) {
+		_visible_horizontal_fov_deg = valid_horizontal_fov_deg;
 		_visible_zoom = zoom;
 
 	} else {
+		_infrared_horizontal_fov_deg = valid_horizontal_fov_deg;
 		_infrared_zoom = zoom;
 	}
 
@@ -823,12 +850,24 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 		send_laser_command(LASER_POWER_OFF);
 		break;
 
+	case dyt_command_s::CMD_OSD_ENABLE:
+		send_tracker_command(TRACKER_OSD_ENABLE);
+		break;
+
+	case dyt_command_s::CMD_OSD_DISABLE:
+		send_tracker_command(TRACKER_OSD_DISABLE);
+		break;
+
 	default:
 		break;
 	}
 
 	if (send_mode) {
-		send_mode_once();
+		const bool mode_sent = send_mode_once();
+
+		if (mode_sent && _mode_control == MODE_TRACK) {
+			_tracking_mode_guard_until = hrt_absolute_time() + TRACKING_MODE_GUARD;
+		}
 	}
 }
 
@@ -853,7 +892,6 @@ void DytGimbal::set_angle_mode(float yaw_deg, float pitch_deg)
 void DytGimbal::set_tracking_mode(int16_t x_px, int16_t y_px)
 {
 	set_mode(MODE_TRACK);
-	_tracking_mode_guard_until = hrt_absolute_time() + TRACKING_MODE_GUARD;
 	_mode_selection = 0x00;
 	put_be_u16(_mode_params, 0, static_cast<uint16_t>(x_px));
 	put_be_u16(_mode_params, 2, static_cast<uint16_t>(y_px));
@@ -883,10 +921,10 @@ void DytGimbal::set_geo_mode(double lat_deg, double lon_deg, float alt_m)
 	put_be_u16(_mode_params, 8, static_cast<uint16_t>(math::constrain(static_cast<int>(roundf(alt_m)), -32768, 32767)));
 }
 
-void DytGimbal::send_mode_once()
+bool DytGimbal::send_mode_once()
 {
 	if (_uart_fd < 0) {
-		return;
+		return false;
 	}
 
 	uint8_t frame[MODE_FRAME_LEN]{};
@@ -898,7 +936,7 @@ void DytGimbal::send_mode_once()
 	frame[11] = _mode_selection;
 	memcpy(&frame[12], _mode_params, sizeof(_mode_params));
 	frame[MODE_FRAME_LEN - 1] = checksum8(frame, MODE_FRAME_LEN - 1);
-	write_frame(frame, sizeof(frame));
+	return write_frame(frame, sizeof(frame));
 }
 
 bool DytGimbal::send_tracker_command(uint8_t control, uint32_t value)
@@ -1245,6 +1283,17 @@ int DytGimbal::custom_command(int argc, char *argv[])
 		return PX4_OK;
 	}
 
+	if (!strcmp(argv[0], "osd")) {
+		if (argc < 2 || (strcmp(argv[1], "on") && strcmp(argv[1], "off"))) {
+			return print_usage("usage: dyt_gimbal osd <on|off>");
+		}
+
+		const uint8_t command = !strcmp(argv[1], "on") ? dyt_command_s::CMD_OSD_ENABLE :
+					dyt_command_s::CMD_OSD_DISABLE;
+		get_instance()->publish_shell_command(command);
+		return PX4_OK;
+	}
+
 	if (!strcmp(argv[0], "angle")) {
 		if (argc < 3) {
 			return print_usage("usage: dyt_gimbal angle <yaw_deg> <pitch_deg>");
@@ -1385,6 +1434,8 @@ Tweety V2.0.9.6 RS422 protocol driver for gimbal status and control.
 	PRINT_MODULE_USAGE_COMMAND("center");
 	PRINT_MODULE_USAGE_COMMAND_DESCR("laser", "Control laser power and continuous ranging");
 	PRINT_MODULE_USAGE_ARG("<on|continuous|off>", "Laser command", false);
+	PRINT_MODULE_USAGE_COMMAND_DESCR("osd", "Enable or disable tracker character display");
+	PRINT_MODULE_USAGE_ARG("<on|off>", "OSD character display state", false);
 	PRINT_MODULE_USAGE_COMMAND_DESCR("angle", "Set follow-mode yaw and pitch angles in degrees");
 	PRINT_MODULE_USAGE_ARG("<yaw_deg> <pitch_deg>", "Yaw and pitch angles", false);
 	PRINT_MODULE_USAGE_COMMAND_DESCR("trackxy", "Track a target at image pixel coordinates");

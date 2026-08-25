@@ -234,6 +234,27 @@ TEST_F(EkfHeightFusionTest, gpsRefNoAltFusion)
 	// EXPECT_NEAR(_ekf->getBaroBiasEstimatorStatus().bias, _sensor_simulator._baro.getData() - _sensor_simulator._gps.getData().alt, 0.2f);
 }
 
+TEST_F(EkfHeightFusionTest, gpsRefRecoversMissingGlobalAltitudeOrigin)
+{
+	// GIVEN: GNSS height fusion is already active under a relative range height reference
+	_ekf_wrapper.setRangeHeightRef();
+	_ekf_wrapper.enableRangeHeightFusion();
+	_ekf_wrapper.enableGpsHeightFusion();
+	_sensor_simulator.runSeconds(1);
+
+	ASSERT_TRUE(_ekf_wrapper.isIntendingGpsHeightFusion());
+	ASSERT_FALSE(_ekf->isGlobalVerticalPositionValid());
+
+	// WHEN: GNSS is selected as height reference while its height fusion remains active
+	_ekf_wrapper.setGpsHeightRef();
+	_sensor_simulator.runSeconds(1);
+
+	// THEN: the valid GNSS altitude initializes the missing global altitude origin
+	EXPECT_TRUE(_ekf->isGlobalVerticalPositionValid());
+	EXPECT_EQ(_ekf->getHeightSensorRef(), HeightSensor::GNSS);
+	EXPECT_NEAR(_ekf->getLatLonAlt().altitude(), _sensor_simulator._gps.getData().alt, 1.f);
+}
+
 TEST_F(EkfHeightFusionTest, baroRefFailOver)
 {
 	// GIVEN: baro reference with GPS and range height fusion

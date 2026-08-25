@@ -51,7 +51,6 @@
 #include <uORB/SubscriptionInterval.hpp>
 #include <uORB/SubscriptionCallback.hpp>
 #include "ManualControlSelector.hpp"
-#include "MovingDiff.hpp"
 
 using namespace time_literals;
 
@@ -81,6 +80,7 @@ protected:
 
 private:
 	static constexpr int MAX_MANUAL_INPUT_COUNT = 3;
+	static constexpr hrt_abstime STICK_OVERRIDE_CONFIRMATION_TIME = 150_ms;
 
 	void Run() override;
 	void updateParams() override;
@@ -114,7 +114,6 @@ private:
 
 	ManualControlSelector _selector;
 
-	hrt_abstime _timestamp_last_loop{0};
 	int _previous_manual_control_input_instance{-1};
 	bool _previous_switches_initialized{false};
 	manual_control_switches_s _previous_switches{};
@@ -125,10 +124,7 @@ private:
 	systemlib::Hysteresis _stick_kill_hysteresis{false};
 	systemlib::Hysteresis _button_arm_hysteresis{false};
 
-	MovingDiff _roll_diff{};
-	MovingDiff _pitch_diff{};
-	MovingDiff _yaw_diff{};
-	MovingDiff _throttle_diff{};
+	systemlib::Hysteresis _stick_override_hysteresis{false};
 
 	perf_counter_t	_loop_perf{perf_alloc(PC_ELAPSED, MODULE_NAME": cycle")};
 	perf_counter_t	_loop_interval_perf{perf_alloc(PC_INTERVAL, MODULE_NAME": interval")};

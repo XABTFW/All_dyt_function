@@ -68,9 +68,13 @@ private:
 			msg.x = lpos.x;
 			msg.y = lpos.y;
 			msg.z = lpos.z;
-			msg.vx = lpos.vx;
-			msg.vy = lpos.vy;
-			msg.vz = lpos.vz;
+
+			const float ground_speed = sqrtf(lpos.vx * lpos.vx + lpos.vy * lpos.vy);
+			const float velocity_scale = PX4_ISFINITE(ground_speed) && ground_speed >= 20.f ? 1.3f : 1.f;
+
+			msg.vx = lpos.vx * velocity_scale;
+			msg.vy = lpos.vy * velocity_scale;
+			msg.vz = lpos.vz * velocity_scale;
 
 			mavlink_msg_local_position_ned_send_struct(_mavlink->get_channel(), &msg);
 

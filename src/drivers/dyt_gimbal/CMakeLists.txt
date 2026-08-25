@@ -4,3 +4,5 @@ px4_add_module(
 	SRCS
 		dyt_gimbal.cpp
 	)
+
+px4_add_unit_gtest(SRC DytPixelLosTest.cpp)

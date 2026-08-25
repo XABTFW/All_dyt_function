@@ -132,7 +132,7 @@ PARAM_DEFINE_INT32(COM_HLDL_REG_T, 0);
  * @group Commander
  * @unit s
  * @min 0
- * @max 35
+ * @max 300
  * @decimal 1
  * @increment 0.1
  */
@@ -603,12 +603,13 @@ PARAM_DEFINE_INT32(NAV_DLL_ACT, 0);
  * The manual control loss failsafe will only be entered after a timeout,
  * set by COM_RC_LOSS_T in seconds.
  *
+ * @value 0 Disabled
  * @value 1 Hold mode
  * @value 2 Return mode
  * @value 3 Land mode
  * @value 5 Terminate
  * @value 6 Disarm
- * @min 1
+ * @min 0
  * @max 6
  *
  * @group Commander

@@ -69,8 +69,11 @@
 #include <uORB/topics/cellular_status.h>
 #include <uORB/topics/differential_pressure.h>
 #include <uORB/topics/distance_sensor.h>
+#include <uORB/topics/dyt_command.h>
+#include <uORB/topics/dyt_guidance_command.h>
 #include <uORB/topics/follow_target.h>
 #include <uORB/topics/follower_info.h>
+#include <uORB/topics/gcs_trajectory_setpoint.h>
 #include <uORB/topics/generator_status.h>
 #include <uORB/topics/gimbal_manager_set_attitude.h>
 #include <uORB/topics/gimbal_manager_set_manual_control.h>
@@ -112,6 +115,11 @@
 #include <uORB/topics/vehicle_rates_setpoint.h>
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/velocity_limits.h>
+#include <uORB/topics/uav_info.h>
+#include <uORB/topics/swarm_start_flag.h>
+#include <uORB/topics/swarm_mission_item.h>
+#include <uORB/topics/leader_id.h>
+#include <uORB/topics/test_mavlink_rx.h>
 
 #if !defined(CONSTRAINED_FLASH)
 # include <uORB/topics/debug_array.h>
@@ -168,7 +176,14 @@ private:
 	void handle_message_command_long(mavlink_message_t *msg);
 	void handle_message_distance_sensor(mavlink_message_t *msg);
 	void handle_message_follow_target(mavlink_message_t *msg);
+	void handle_message_swarm_start_flag(mavlink_message_t *msg);
 	void handle_message_uav_info(mavlink_message_t *msg);
+	void handle_message_swarm_mission_item(mavlink_message_t *msg);
+	void handle_message_test_mavlink_rx(mavlink_message_t *msg);
+	void handle_message_dyt_guidance_command(mavlink_message_t *msg);
+	void handle_message_dyt_track_point_command(mavlink_message_t *msg);
+	void send_dyt_track_point_ack(const mavlink_message_t &request, uint32_t request_id, uint16_t x_px, uint16_t y_px,
+				      uint8_t result);
 	void handle_message_generator_status(mavlink_message_t *msg);
 	void handle_message_set_gps_global_origin(mavlink_message_t *msg);
 	void handle_message_gps_rtcm_data(mavlink_message_t *msg);
@@ -199,6 +214,7 @@ private:
 	void handle_message_set_mode(mavlink_message_t *msg);
 	void handle_message_set_position_target_global_int(mavlink_message_t *msg);
 	void handle_message_set_position_target_local_ned(mavlink_message_t *msg);
+	void publish_gcs_trajectory_setpoint(const trajectory_setpoint_s &setpoint, hrt_abstime timestamp);
 	void handle_message_statustext(mavlink_message_t *msg);
 	void handle_message_tunnel(mavlink_message_t *msg);
 	void handle_message_utm_global_position(mavlink_message_t *msg);
@@ -295,9 +311,16 @@ private:
 	uint8_t _mavlink_status_last_buffer_overrun{0};
 	uint8_t _mavlink_status_last_parse_error{0};
 	uint16_t _mavlink_status_last_packet_rx_drop_count{0};
+	leader_id_s _group_id{};
 
 	// ORB publications
+	uORB::Publication<uav_info_s> 			_uav_info_pub{ORB_ID(uav_info)};
 	uORB::Publication<follower_info_s> 			_follower_info_pub{ORB_ID(follower_info)};
+	uORB::Publication<swarm_start_flag_s> 		_swarm_start_flag_pub{ORB_ID(swarm_start_flag)};
+	uORB::Publication<swarm_mission_item_s> 		_swarm_mission_item_pub{ORB_ID(swarm_mission_item)};
+	uORB::Publication<test_mavlink_rx_s> 		_test_mavlink_rx_pub{ORB_ID(test_mavlink_rx)};
+	uORB::Publication<dyt_command_s> 			_dyt_command_pub{ORB_ID(dyt_command)};
+	uORB::Publication<dyt_guidance_command_s> 		_dyt_guidance_command_pub{ORB_ID(dyt_guidance_command)};
 	uORB::Publication<airspeed_s>				_airspeed_pub{ORB_ID(airspeed)};
 	uORB::Publication<battery_status_s>			_battery_pub{ORB_ID(battery_status)};
 	uORB::Publication<camera_status_s>			_camera_status_pub{ORB_ID(camera_status)};
@@ -321,6 +344,7 @@ private:
 	uORB::Publication<open_drone_id_self_id_s>		_open_drone_id_self_id_pub{ORB_ID(open_drone_id_self_id)};
 	uORB::Publication<open_drone_id_system_s>		_open_drone_id_system_pub{ORB_ID(open_drone_id_system)};
 	uORB::Publication<generator_status_s>			_generator_status_pub{ORB_ID(generator_status)};
+	uORB::Publication<gcs_trajectory_setpoint_s>		_gcs_trajectory_setpoint_pub{ORB_ID(gcs_trajectory_setpoint)};
 	uORB::Publication<vehicle_attitude_s>			_attitude_pub{ORB_ID(vehicle_attitude)};
 	uORB::Publication<vehicle_attitude_setpoint_s>		_att_sp_pub{ORB_ID(vehicle_attitude_setpoint)};
 	uORB::Publication<vehicle_attitude_setpoint_s>		_mc_virtual_att_sp_pub{ORB_ID(mc_virtual_attitude_setpoint)};
@@ -365,6 +389,7 @@ private:
 	uORB::Subscription	_autotune_attitude_control_status_sub{ORB_ID(autotune_attitude_control_status)};
 
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
+	uORB::Subscription	_group_id_sub{ORB_ID(leader_id)};
 
 	// hil_sensor and hil_state_quaternion
 	enum SensorSource {
@@ -387,6 +412,15 @@ private:
 	TunePublisher *_tune_publisher{nullptr};
 
 	hrt_abstime _last_heartbeat_check{0};
+
+	uint32_t _last_dyt_track_request_id{0};
+	uint16_t _last_dyt_track_x_px{0};
+	uint16_t _last_dyt_track_y_px{0};
+	uint16_t _last_dyt_track_image_width_px{0};
+	uint16_t _last_dyt_track_image_height_px{0};
+	uint8_t _last_dyt_track_source_system{0};
+	uint8_t _last_dyt_track_source_component{0};
+	uint8_t _last_dyt_track_result{MAV_RESULT_FAILED};
 
 	hrt_abstime _heartbeat_type_antenna_tracker{0};
 	hrt_abstime _heartbeat_type_gcs{0};

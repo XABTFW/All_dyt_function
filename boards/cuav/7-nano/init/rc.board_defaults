@@ -3,6 +3,11 @@
 # board specific defaults
 #------------------------------------------------------------------------------
 
+# TELEM1 data link. 1200 B/s forces the normal MAVLink streams to about 20% of
+# their requested rates once swarm and DYT telemetry are enabled. 8000 B/s
+# leaves serial framing headroom at 115200 baud and keeps range updates timely.
+param set-default MAV_0_RATE 8000
+
 # Mavlink ethernet (CFG 1000)
 param set-default MAV_2_CONFIG 1000
 param set-default MAV_2_BROADCAST 1
@@ -12,9 +17,323 @@ param set-default MAV_2_RATE 100000
 param set-default MAV_2_REMOTE_PRT 14550
 param set-default MAV_2_UDP_PRT 14550
 
-param set-default BAT1_V_DIV 31
+# Flight defaults extracted from "打旋翼的反无参数.ulg".
+# Sensor/RC calibration and hardware/link-specific parameters are intentionally excluded.
+# ===== 导引头制导 DYTG（全部）（77 项）=====
+param set-default DYTG_ACT_AUX -1
+param set-default DYTG_ACT_BTN 2
+param set-default DYTG_ALP_K 1
+param set-default DYTG_ALP_MAX 10
+param set-default DYTG_ALP_VMIN 1
+param set-default DYTG_AUTO_EN 0
+param set-default DYTG_AUTO_N 3
+param set-default DYTG_COOP_EN 1
+param set-default DYTG_CTRMS 400
+param set-default DYTG_DLY_MS 120
+param set-default DYTG_FCONE 40
+param set-default DYTG_GEO_EN 0
+param set-default DYTG_HOFF_T 0.800000012
+param set-default DYTG_INTDLY 0.180000007
+param set-default DYTG_INT_AUX 2
+param set-default DYTG_KA_FOL 0.5
+param set-default DYTG_KA_INT 2
+param set-default DYTG_KV_FOL 0.800000012
+param set-default DYTG_KV_INT 1.20000005
+param set-default DYTG_LOCK_N 2
+param set-default DYTG_LOSTMS 240000
+param set-default DYTG_LPF_A 0.699999988
+param set-default DYTG_LXSIGN 1
+param set-default DYTG_LYSIGN 1
+param set-default DYTG_MAXACC 4
+param set-default DYTG_MAXAGE 0.5
+param set-default DYTG_MAXDZ 6
+param set-default DYTG_MAXJIT 0.300000012
+param set-default DYTG_MAXV 47
+param set-default DYTG_MAXYAWR 120
+param set-default DYTG_MNT_EN 1
+param set-default DYTG_MNT_P 90
+param set-default DYTG_MNT_PRED 0
+param set-default DYTG_MNT_R 0
+param set-default DYTG_MNT_Y 0
+param set-default DYTG_N_FOL 0.600000024
+param set-default DYTG_N_INT 3.5
+param set-default DYTG_POFF -12
+param set-default DYTG_PREDMAX 0.0299999993
+param set-default DYTG_PSIGN 1
+param set-default DYTG_RELOCKN 20
+param set-default DYTG_ROFF 0
+param set-default DYTG_RSIGN 1
+param set-default DYTG_RTRYMS 500
+param set-default DYTG_SC_DWEL 0.200000003
+param set-default DYTG_SC_PAUSE 0.0500000007
+param set-default DYTG_SC_PSPD 3
+param set-default DYTG_SC_STEP 20
+param set-default DYTG_SC_YSPD 3
+param set-default DYTG_SC_YSTP 10
+param set-default DYTG_STK_TK 0.300000012
+param set-default DYTG_SZ_MS 300
+param set-default DYTG_TGT_ALTOFF 0
+param set-default DYTG_TGT_ID 1
+param set-default DYTG_TGT_TO 10
+param set-default DYTG_VMIN 1
+param set-default DYTG_V_FOL 50
+param set-default DYTG_V_INT 6
+param set-default DYTG_WAITMS 2500
+param set-default DYTG_XYDB 0.119999997
+param set-default DYTG_XYFULL 0.850000024
+param set-default DYTG_XYOVR_EN 1
+param set-default DYTG_XYOVR_MIN 0.150000006
+param set-default DYTG_XYOVR_V 2
+param set-default DYTG_XYOVR_Z 0.600000024
+param set-default DYTG_XYROT_EN 1
+param set-default DYTG_XYROT_MIN 0.150000006
+param set-default DYTG_XYROT_W 0.800000012
+param set-default DYTG_XYSLEW 6
+param set-default DYTG_YAWLIM 30
+param set-default DYTG_YAWLOS 0.119999997
+param set-default DYTG_YOFF -7
+param set-default DYTG_YSIGN 1
+param set-default DYTG_ZSCALE 0.300000012
+param set-default DYTG_ZXY_EN 1
+param set-default DYTG_ZXY_FULL 0.800000012
+param set-default DYTG_ZXY_MIN 0.349999994
+
+# ===== 导引头驱动 DYT（全部）（21 项）=====
+param set-default DYT_BAUD 115200
+param set-default DYT_GEO_MNT_EN 0
+param set-default DYT_GEO_MNT_P 0
+param set-default DYT_GEO_MNT_R 0
+param set-default DYT_GEO_MNT_Y 0
+param set-default DYT_GEO_POFF 0
+param set-default DYT_GEO_PSIGN 1
+param set-default DYT_GEO_ROFF 0
+param set-default DYT_GEO_RSIGN 1
+param set-default DYT_GEO_YOFF 0
+param set-default DYT_GEO_YSIGN 1
+param set-default DYT_HOME_DLY 3000
+param set-default DYT_HOME_DUR 10000
+param set-default DYT_HOME_EN 1
+param set-default DYT_HOME_INT 500
+param set-default DYT_HOME_PIT -90
+param set-default DYT_HOME_YAW 0
+param set-default DYT_LOG_MS 0
+param set-default DYT_RAWLOG 0
+param set-default DYT_RTRY_MS 1000
+param set-default DYT_TO_MS 300
+
+# ===== CRDZ（全部）（20 项）=====
+param set-default CRDZ_ACT_AUX -1
+param set-default CRDZ_ACT_BTN 0
+param set-default CRDZ_ALT_DIFF 0
+param set-default CRDZ_APP_SPD 4
+param set-default CRDZ_DIST 0
+param set-default CRDZ_HOLD_EN 0
+param set-default CRDZ_HOLD_HRAD 3
+param set-default CRDZ_HOLD_MODE 1
+param set-default CRDZ_HOLD_REL 5
+param set-default CRDZ_HOLD_T 2
+param set-default CRDZ_HOLD_VEL 5
+param set-default CRDZ_HOLD_VRAD 1.5
+
+param set-default CRDZ_SLOW_RAD 20
+param set-default CRDZ_TPOS_JMP 7
+param set-default CRDZ_TPOS_TC 0.5
+param set-default DYTG_HOLD_EN 1
+param set-default DYTG_NET_EN 1
+param set-default DYTG_STOP_D 0.5
+param set-default CRDZ_TVEL_TC 0.5
+param set-default DYT_VEH_TYPE 2
+param set-default DYT_LOS_SC 0.05
+param set-default DYTG_FIRE_EN 1
+param set-default CRDZ_VSLEW 3
+param set-default CRDZ_XY_OFF_EN 0
+param set-default CRDZ_X_OFF 30
+param set-default CRDZ_Y_OFF 0
+param set-default DYTG_MNT_MODE 0
+param set-default DYTG_ALT_MODE 1
+
+param set-default CEM_EN 1
+param set-default CEM_TO_ACT 0
+
+# ===== 多旋翼姿态/角速度控制 MC（全部）（53 项）=====
+param set-default MC_ACRO_EXPO 0
+param set-default MC_ACRO_EXPO_Y 0
+param set-default MC_ACRO_P_MAX 100
+param set-default MC_ACRO_R_MAX 100
+param set-default MC_ACRO_SUPEXPO 0
+param set-default MC_ACRO_SUPEXPOY 0
+param set-default MC_ACRO_Y_MAX 100
+param set-default MC_AIRMODE 0
+param set-default MC_AT_APPLY 1
+param set-default MC_AT_EN 1
+param set-default MC_AT_RISE_TIME 0.140000001
+param set-default MC_AT_START 0
+param set-default MC_AT_SYSID_AMP 0.699999988
+param set-default MC_BAT_SCALE_EN 0
+param set-default MC_MAN_TILT_TAU 0
+param set-default MC_ORBIT_RAD_MAX 1000
+param set-default MC_ORBIT_YAW_MOD 0
+param set-default MC_PITCHRATE_D 0
+param set-default MC_PITCHRATE_FF 0
+param set-default MC_PITCHRATE_I 0.119999997
+param set-default MC_PITCHRATE_K 1
+param set-default MC_PITCHRATE_MAX 180
+param set-default MC_PITCHRATE_P 0.100000001
+param set-default MC_PITCH_P 4.5
+param set-default MC_PR_INT_LIM 0.300000012
+param set-default MC_ROLLRATE_D 0
+param set-default MC_ROLLRATE_FF 0
+param set-default MC_ROLLRATE_I 0.119999997
+param set-default MC_ROLLRATE_K 1
+param set-default MC_ROLLRATE_MAX 180
+param set-default MC_ROLLRATE_P 0.100000001
+param set-default MC_ROLL_P 4.5
+param set-default MC_RR_INT_LIM 0.300000012
+param set-default MC_SLOW_DEF_HVEL 3
+param set-default MC_SLOW_DEF_VVEL 1
+param set-default MC_SLOW_DEF_YAWR 45
+param set-default MC_SLOW_MAP_HVEL 0
+param set-default MC_SLOW_MAP_PTCH 0
+param set-default MC_SLOW_MAP_VVEL 0
+param set-default MC_SLOW_MAP_YAWR 0
+param set-default MC_SLOW_MIN_HVEL 0.300000012
+param set-default MC_SLOW_MIN_VVEL 0.300000012
+param set-default MC_SLOW_MIN_YAWR 3
+param set-default MC_YAWRATE_D 0
+param set-default MC_YAWRATE_FF 0
+param set-default MC_YAWRATE_I 0.100000001
+param set-default MC_YAWRATE_K 1
+param set-default MC_YAWRATE_MAX 90
+param set-default MC_YAWRATE_P 0.200000003
+param set-default MC_YAW_P 2
+param set-default MC_YAW_TQ_CUTOFF 2
+param set-default MC_YAW_WEIGHT 0.400000006
+param set-default MC_YR_INT_LIM 0.300000012
+
+# ===== 多旋翼位置/速度控制 MPC（全部）（64 项）=====
+param set-default MPC_ACC_DECOUPLE 1
+param set-default MPC_ACC_DOWN_MAX 3
+param set-default MPC_ACC_HOR 5
+param set-default MPC_ACC_HOR_MAX 6
+param set-default MPC_ACC_UP_MAX 4
+param set-default MPC_ALT_MODE 2
+param set-default MPC_HOLD_DZ 0.100000001
+param set-default MPC_HOLD_MAX_XY 0.800000012
+param set-default MPC_HOLD_MAX_Z 0.600000024
+param set-default MPC_JERK_AUTO 6
+param set-default MPC_JERK_MAX 8
+param set-default MPC_LAND_ALT1 10
+param set-default MPC_LAND_ALT2 5
+param set-default MPC_LAND_ALT3 1
+param set-default MPC_LAND_CRWL 0.300000012
+param set-default MPC_LAND_RADIUS 1000
+param set-default MPC_LAND_RC_HELP 0
+param set-default MPC_LAND_SPEED 0.699999988
+param set-default MPC_MANTHR_MIN 0.0799999982
+param set-default MPC_MAN_TILT_MAX 60
+param set-default MPC_MAN_Y_MAX 150
+param set-default MPC_MAN_Y_TAU 0.0799999982
+param set-default MPC_POS_MODE 4
+param set-default MPC_THR_CURVE 0
+param set-default MPC_THR_HOVER 0.360000014
+param set-default MPC_THR_MAX 1
+param set-default MPC_THR_MIN 0.119999997
+param set-default MPC_THR_XY_MARG 0.300000012
+param set-default MPC_TILTMAX_AIR 60
+param set-default MPC_TILTMAX_LND 8
+param set-default MPC_TKO_RAMP_T 3
+param set-default MPC_TKO_SPEED 3
+param set-default MPC_USE_HTE 1
+param set-default MPC_VELD_LP 5
+param set-default MPC_VEL_LP 0
+param set-default MPC_VEL_MANUAL 3
+param set-default MPC_VEL_MAN_BACK -1
+param set-default MPC_VEL_MAN_SIDE -1
+param set-default MPC_VEL_NF_BW 5
+param set-default MPC_VEL_NF_FRQ 0
+param set-default MPC_XY_CRUISE 3
+param set-default MPC_XY_ERR_MAX 2
+param set-default MPC_XY_MAN_EXPO 0.600000024
+param set-default MPC_XY_P 1.10000002
+param set-default MPC_XY_TRAJ_P 0.5
+param set-default MPC_XY_VEL_ALL -10
+param set-default MPC_XY_VEL_D_ACC 0.200000003
+param set-default MPC_XY_VEL_I_ACC 0.5
+param set-default MPC_XY_VEL_MAX 45
+param set-default MPC_XY_VEL_P_ACC 2
+param set-default MPC_YAWRAUTO_ACC 20
+param set-default MPC_YAWRAUTO_MAX 60
+param set-default MPC_YAW_EXPO 0.600000024
+param set-default MPC_YAW_MODE 0
+param set-default MPC_Z_MAN_EXPO 0.600000024
+param set-default MPC_Z_P 1
+param set-default MPC_Z_VEL_ALL -3
+param set-default MPC_Z_VEL_D_ACC 0
+param set-default MPC_Z_VEL_I_ACC 2
+param set-default MPC_Z_VEL_MAX_DN 20
+param set-default MPC_Z_VEL_MAX_UP 30
+param set-default MPC_Z_VEL_P_ACC 4
+param set-default MPC_Z_V_AUTO_DN 3
+param set-default MPC_Z_V_AUTO_UP 5
+
+# ===== 其他关键基本飞行参数（非默认配置）（33 项）=====
 param set-default BAT1_A_PER_V 24
+param set-default BAT1_N_CELLS 6
+param set-default BAT1_V_CHARGED 4.19999981
+param set-default BAT1_V_DIV 31
+param set-default CA_ROTOR0_PX 1
+param set-default CA_ROTOR0_PY 1
+param set-default CA_ROTOR1_PX -1
+param set-default CA_ROTOR1_PY -1
+param set-default CA_ROTOR2_KM -0.0500000007
+param set-default CA_ROTOR2_PX 1
+param set-default CA_ROTOR2_PY -1
+param set-default CA_ROTOR3_KM -0.0500000007
+param set-default CA_ROTOR3_PX -1
+param set-default CA_ROTOR3_PY 1
+param set-default CA_ROTOR_COUNT 4
+param set-default COM_RC_LOSS_T 300
+param set-default IMU_GYRO_RATEMAX 800
+param set-default PWM_MAIN_FUNC1 104
+param set-default PWM_MAIN_FUNC2 102
+param set-default PWM_MAIN_FUNC3 103
+param set-default PWM_MAIN_FUNC4 101
+param set-default PWM_MAIN_MAX1 1900
+param set-default PWM_MAIN_MAX2 1900
+param set-default PWM_MAIN_MAX3 1900
+param set-default PWM_MAIN_MAX4 1900
+param set-default PWM_MAIN_MIN1 1100
+param set-default PWM_MAIN_MIN2 1100
+param set-default PWM_MAIN_MIN3 1100
+param set-default PWM_MAIN_MIN4 1100
+param set-default PWM_MAIN_TIM0 -4
+param set-default RTL_DESCEND_ALT 10
+param set-default RTL_RETURN_ALT 30
+param set-default SYS_AUTOSTART 4001
 
 param set-default USB_MAV_MODE 5
+
+# GPS is connected through CAN. Reserve GPS1 for the forward-facing SDM50.
+param set GPS_1_CONFIG 0
+
+# MT-06 MAVLink rangefinder on GPS2.
+param set GPS_2_CONFIG 0
+param set MAV_1_CONFIG 202
+param set MAV_1_MODE 0
+param set SER_GPS2_BAUD 115200
+param set EKF2_RNG_CTRL 1
+param set EKF2_HGT_REF 0
+
+# ToF fast touchdown test settings.
+param set LNDMC_TD_EN 1
+param set LNDMC_TD_DIST 0.1
+param set LNDMC_TD_ALT 5.0
+param set LNDMC_TD_TIME 0.04
+param set COM_DISARM_LAND 0.05
+
+# The custom communication emergency module owns RC and GCS link-loss mode changes.
+param set NAV_RCL_ACT 0
+param set COM_RCL_EXCEPT 7
+param set NAV_DLL_ACT 0
 
 safety_button start

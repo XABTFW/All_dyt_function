@@ -100,3 +100,78 @@ PARAM_DEFINE_FLOAT(LNDMC_ROT_MAX, 20.0f);
  *
  */
 PARAM_DEFINE_FLOAT(LNDMC_ALT_GND, 2.f);
+
+/**
+ * Enable ToF fast touchdown detection
+ *
+ * When enabled, fresh downward-facing laser range samples can accelerate the
+ * multicopter landed-state transition during an automatic LAND setpoint.
+ * Keep disabled until the sensor and trigger distance have been validated.
+ *
+ * @boolean
+ * @group Land Detector
+ */
+PARAM_DEFINE_INT32(LNDMC_TD_EN, 0);
+
+/**
+ * ToF fast touchdown trigger distance
+ *
+ * This is the sensor-to-ground measurement, not vehicle ground clearance.
+ * It must be calibrated for the sensor mounting height and landing surface.
+ *
+ * @unit m
+ * @min 0.05
+ * @max 1.00
+ * @decimal 2
+ * @increment 0.01
+ * @group Land Detector
+ */
+PARAM_DEFINE_FLOAT(LNDMC_TD_DIST, 0.28f);
+
+/**
+ * ToF fast touchdown independent altitude limit
+ *
+ * Maximum barometric/local height above Home at which fast touchdown may use
+ * range data. A valid local Home position is required. This is independent of
+ * the range measurement, so an implausibly low ToF reading above this height
+ * cannot trigger landed. Landings more than 0.5 m below Home elevation use the
+ * normal PX4 land detector instead.
+ *
+ * @unit m
+ * @min 0.20
+ * @max 10.00
+ * @decimal 1
+ * @increment 0.5
+ * @group Land Detector
+ */
+PARAM_DEFINE_FLOAT(LNDMC_TD_ALT, 5.0f);
+
+/**
+ * ToF fast touchdown operational range
+ *
+ * Maximum distance at which measurements are considered usable for the
+ * fast-touchdown detection. Samples above this value are rejected.
+ *
+ * @unit m
+ * @min 0.50
+ * @max 10.00
+ * @decimal 1
+ * @increment 0.1
+ * @group Land Detector
+ */
+PARAM_DEFINE_FLOAT(LNDMC_TD_MAX, 5.0f);
+
+/**
+ * ToF fast touchdown confirmation time
+ *
+ * At least three distinct range samples are always required in addition to
+ * this minimum elapsed time.
+ *
+ * @unit s
+ * @min 0.02
+ * @max 0.20
+ * @decimal 2
+ * @increment 0.01
+ * @group Land Detector
+ */
+PARAM_DEFINE_FLOAT(LNDMC_TD_TIME, 0.04f);

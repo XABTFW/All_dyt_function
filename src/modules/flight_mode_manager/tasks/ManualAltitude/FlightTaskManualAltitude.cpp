@@ -90,7 +90,8 @@ void FlightTaskManualAltitude::_scaleSticks()
 {
 	// Use sticks input with deadzone and exponential curve for vertical velocity
 	const float vel_max_up = fminf(_param_mpc_z_vel_max_up.get(), _velocity_constraint_up);
-	const float vel_max_down = fminf(_param_mpc_z_vel_max_dn.get(), _velocity_constraint_down);
+	const float vel_max_down = fminf(_param_mpc_man_z_dn.get(), _velocity_constraint_down);
+	_constraints.speed_down = vel_max_down;
 	const float vel_max_z = (_sticks.getThrottleZeroCentered() < 0.f) ? vel_max_down : vel_max_up;
 	_velocity_setpoint(2) = vel_max_z * -_sticks.getThrottleZeroCenteredExpo();
 }
@@ -229,17 +230,17 @@ void FlightTaskManualAltitude::_respectMaxAltitude()
 		float vel_constrained = _param_mpc_z_p.get() * (_max_distance_to_ground - _dist_to_bottom);
 
 		if (PX4_ISFINITE(_max_distance_to_ground)) {
-			_constraints.speed_up = math::constrain(vel_constrained, -_param_mpc_z_vel_max_dn.get(), _param_mpc_z_vel_max_up.get());
+			_constraints.speed_up = math::constrain(vel_constrained, -_param_mpc_man_z_dn.get(), _param_mpc_z_vel_max_up.get());
 
 		} else {
 			_constraints.speed_up = _param_mpc_z_vel_max_up.get();
 		}
 
 		if (_dist_to_bottom > _max_distance_to_ground && !(_sticks.getThrottleZeroCenteredExpo() < FLT_EPSILON)) {
-			_velocity_setpoint(2) = math::constrain(-vel_constrained, 0.f, _param_mpc_z_vel_max_dn.get());
+			_velocity_setpoint(2) = math::constrain(-vel_constrained, 0.f, _param_mpc_man_z_dn.get());
 		}
 
-		_constraints.speed_down = _param_mpc_z_vel_max_dn.get();
+		_constraints.speed_down = fminf(_param_mpc_man_z_dn.get(), _velocity_constraint_down);
 	}
 }
 

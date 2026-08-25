@@ -43,11 +43,15 @@
 #pragma once
 
 #include <uORB/topics/hover_thrust_estimate.h>
+#include <uORB/topics/home_position.h>
+#include <uORB/topics/position_setpoint_triplet.h>
 #include <uORB/topics/trajectory_setpoint.h>
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_thrust_setpoint.h>
 #include <uORB/topics/takeoff_status.h>
+#include <uORB/SubscriptionMultiArray.hpp>
 
+#include "FastTouchdownDetector.hpp"
 #include "LandDetector.h"
 
 using namespace time_literals;
@@ -80,6 +84,10 @@ protected:
 	void _set_hysteresis_factor(const int factor) override;
 private:
 	bool _is_close_to_ground();
+	bool _fast_touchdown_landing_active() const;
+	bool _fast_touchdown_allowed(hrt_abstime now) const;
+	float _height_above_home() const;
+	void _update_fast_touchdown(hrt_abstime now);
 
 	/** Time in us that freefall has to hold before triggering freefall */
 	static constexpr hrt_abstime FREEFALL_TRIGGER_TIME_US = 300_ms;
@@ -111,6 +119,14 @@ private:
 
 	uORB::Subscription _vehicle_control_mode_sub{ORB_ID(vehicle_control_mode)};
 	uORB::Subscription _takeoff_status_sub{ORB_ID(takeoff_status)};
+	uORB::Subscription _home_position_sub{ORB_ID(home_position)};
+	uORB::Subscription _position_setpoint_triplet_sub{ORB_ID(position_setpoint_triplet)};
+	uORB::SubscriptionMultiArray<distance_sensor_s> _distance_sensor_subs{ORB_ID::distance_sensor};
+
+	position_setpoint_triplet_s _position_setpoint_triplet{};
+	home_position_s _home_position{};
+	FastTouchdownDetector _fast_touchdown_detector{};
+	bool _fast_touchdown_logged{false};
 
 	hrt_abstime _hover_thrust_estimate_last_valid{0};
 	bool _hover_thrust_estimate_valid{false};
@@ -138,7 +154,12 @@ private:
 		(ParamFloat<px4::params::LNDMC_ROT_MAX>)    _param_lndmc_rot_max,
 		(ParamFloat<px4::params::LNDMC_XY_VEL_MAX>) _param_lndmc_xy_vel_max,
 		(ParamFloat<px4::params::LNDMC_Z_VEL_MAX>)  _param_lndmc_z_vel_max,
-		(ParamFloat<px4::params::LNDMC_ALT_GND>)    _param_lndmc_alt_gnd_effect
+		(ParamFloat<px4::params::LNDMC_ALT_GND>)    _param_lndmc_alt_gnd_effect,
+		(ParamBool<px4::params::LNDMC_TD_EN>)       _param_lndmc_td_enable,
+		(ParamFloat<px4::params::LNDMC_TD_DIST>)    _param_lndmc_td_distance,
+		(ParamFloat<px4::params::LNDMC_TD_ALT>)     _param_lndmc_td_altitude,
+		(ParamFloat<px4::params::LNDMC_TD_MAX>)     _param_lndmc_td_max_distance,
+		(ParamFloat<px4::params::LNDMC_TD_TIME>)    _param_lndmc_td_time
 	);
 };
 

@@ -283,6 +283,22 @@ PARAM_DEFINE_FLOAT(CRDZ_TVEL_TC, 0.5f);
  * @group Cooperative Rendezvous
  */
 PARAM_DEFINE_FLOAT(CRDZ_TPOS_JMP, 7.f);
+
+/**
+ * Maximum vertical setpoint error
+ *
+ * Rejects a target altitude when the resulting local NED vertical setpoint is
+ * farther than this distance from the current aircraft position. Rejected
+ * targets hold the current position and are not used to enter Offboard mode.
+ *
+ * @unit m
+ * @min 1
+ * @max 500
+ * @decimal 1
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_FLOAT(CRDZ_ALT_ERR, 100.f);
+
 /**
  * Altitude difference from target
  *
@@ -297,3 +313,113 @@ PARAM_DEFINE_FLOAT(CRDZ_TPOS_JMP, 7.f);
  * @group Cooperative Rendezvous
  */
 PARAM_DEFINE_FLOAT(CRDZ_ALT_DIFF, 0.f);
+
+/**
+ * Ground-station target priority enable
+ *
+ * When enabled, a valid ground-station trajectory target has priority over
+ * the target-aircraft position while cooperative rendezvous is active.
+ * Disable to ignore ground-station trajectory targets in this module.
+ *
+ * @boolean
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_INT32(CRDZ_GCS_EN, 1);
+
+/**
+ * GCS setpoint timeout
+ *
+ * Time after the last valid ground-station trajectory setpoint before the
+ * rendezvous aircraft falls back to the target-aircraft position source.
+ *
+ * @unit s
+ * @min 0.1
+ * @max 5
+ * @decimal 2
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_FLOAT(CRDZ_GCS_TOUT, 0.6f);
+
+/**
+ * Target aircraft position timeout
+ *
+ * Maximum age of the latest target-aircraft position used for rendezvous.
+ * When it expires, the rendezvous aircraft keeps publishing its current
+ * position as an Offboard hold setpoint.
+ *
+ * @unit s
+ * @min 0.1
+ * @max 30
+ * @decimal 1
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_FLOAT(CRDZ_TGT_TOUT, 2.f);
+
+/**
+ * Minimum target-link height protection enable
+ *
+ * Enables the CRDZ_MIN_HGT clamp for setpoints derived from the other
+ * aircraft position.
+ *
+ * @boolean
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_INT32(CRDZ_MINH_EN, 1);
+
+/**
+ * Minimum target-link height
+ *
+ * Minimum height above the local reference for target-aircraft rendezvous
+ * setpoints. This limit is only applied to setpoints derived from the other
+ * aircraft position; ground-station trajectory setpoints are not constrained
+ * by this parameter. Set to 0 to disable.
+ *
+ * @unit m
+ * @min 0
+ * @max 100
+ * @decimal 1
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_FLOAT(CRDZ_MIN_HGT, 0.f);
+
+/**
+ * Target history and tracking delay enable
+ *
+ * Enables storage of target-aircraft position history and delayed following
+ * through CRDZ_HIST_T and CRDZ_TRK_DLY.
+ *
+ * @boolean
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_INT32(CRDZ_HIST_EN, 1);
+
+/**
+ * Target history duration
+ *
+ * Time span retained for target-aircraft position history. The effective
+ * tracking delay cannot exceed this duration. Changing this parameter clears
+ * the existing history.
+ *
+ * @unit s
+ * @min 0.1
+ * @max 10
+ * @decimal 1
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_FLOAT(CRDZ_HIST_T, 2.f);
+
+/**
+ * Target-link track delay
+ *
+ * Delay applied to rendezvous setpoints derived from the other aircraft
+ * position history. The current target data is still used for target-facing
+ * references; only the aircraft follow setpoint is delayed. Set to 0 to
+ * disable historical tracking.
+ *
+ * @unit s
+ * @min 0
+ * @max 10
+ * @decimal 2
+ * @group Cooperative Rendezvous
+ */
+PARAM_DEFINE_FLOAT(CRDZ_TRK_DLY, 1.f);

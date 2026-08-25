@@ -54,21 +54,67 @@ PARAM_DEFINE_INT32(DYT_LOG_MS, 0);
 PARAM_DEFINE_INT32(DYT_RAWLOG, 0);
 
 /**
- * Tweety V2 miss-distance scale
+ * Tweety V2 manual pixel-angle scale
  *
- * Converts one raw azimuth/elevation miss-distance count from the V2 servo
- * status frame to degrees. The V2.0.9.6 document does not define this scale,
- * so the safe default is 0. With a zero value the driver will publish the
- * gimbal attitude but will not mark a tracked target as valid for guidance.
- * Set this only after confirming the value and sign with the payload vendor.
+ * Optional fixed conversion from one tracking miss-distance pixel to degrees.
+ * Set to 0 to derive the conversion from the live horizontal field of view and
+ * the configured image dimensions. A positive value overrides that dynamic
+ * conversion and should only be used for a fixed, calibrated zoom setting.
  *
- * @unit deg
  * @min 0
  * @max 1
  * @decimal 6
  * @group DYT Gimbal
  */
 PARAM_DEFINE_FLOAT(DYT_LOS_SC, 0.f);
+
+/**
+ * Visible tracking image width
+ *
+ * Width of the visible-light image used by the tracker. The Tweety V2.0.9.6
+ * tracking parameter table specifies a visible-light range up to 1920 pixels.
+ *
+ * @min 16
+ * @max 8192
+ * @group DYT Gimbal
+ */
+PARAM_DEFINE_INT32(DYT_VIS_W, 1920);
+
+/**
+ * Visible tracking image height
+ *
+ * Height of the visible-light image used by the tracker. The Tweety V2.0.9.6
+ * tracking parameter table specifies a visible-light range up to 1080 pixels.
+ *
+ * @min 16
+ * @max 8192
+ * @group DYT Gimbal
+ */
+PARAM_DEFINE_INT32(DYT_VIS_H, 1080);
+
+/**
+ * Infrared tracking image width
+ *
+ * Width of the infrared image used by the tracker. The Tweety V2.0.9.6
+ * tracking parameter table specifies an infrared range up to 1280 pixels.
+ *
+ * @min 16
+ * @max 8192
+ * @group DYT Gimbal
+ */
+PARAM_DEFINE_INT32(DYT_IR_W, 1280);
+
+/**
+ * Infrared tracking image height
+ *
+ * Height of the infrared image used by the tracker. The Tweety V2.0.9.6
+ * tracking parameter table specifies an infrared range up to 1024 pixels.
+ *
+ * @min 16
+ * @max 8192
+ * @group DYT Gimbal
+ */
+PARAM_DEFINE_INT32(DYT_IR_H, 1024);
 
 /**
  * Tweety V2 locked tracking value

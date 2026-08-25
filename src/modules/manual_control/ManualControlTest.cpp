@@ -68,6 +68,8 @@ public:
 		// Set stick input timeout to half a second
 		const float com_rc_loss_t = .5f;
 		param_set(param_find("COM_RC_LOSS_T"), &com_rc_loss_t);
+		const float com_rc_stick_ov = 30.f;
+		param_set(param_find("COM_RC_STICK_OV"), &com_rc_stick_ov);
 
 		int32_t mode = NAVIGATION_STATE_ACRO;
 		param_set(param_find("COM_FLTMODE1"), &mode);
@@ -326,4 +328,68 @@ TEST_F(SwitchTest, ModeSwitchInitializationArmed)
 	EXPECT_TRUE(_action_request_sub.update());
 	EXPECT_EQ(_action_request_sub.get().action, ACTION_SWITCH_MODE);
 	EXPECT_EQ(_action_request_sub.get().mode, TestManualControl::navStateFromParam(NAVIGATION_STATE_MANUAL));
+}
+
+TEST_F(SwitchTest, ThrottleChangeDoesNotRequestStickOverride)
+{
+	// GIVEN: valid RC input matching the throttle change recorded in the flight log
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .roll = 0.f, .pitch = 0.f, .yaw = 0.f,
+					   .throttle = -0.9675f, .valid = true,
+					   .data_source = manual_control_setpoint_s::SOURCE_RC});
+	_manual_control.processInput(_timestamp += 20_ms);
+	ASSERT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_FALSE(_manual_control_setpoint_sub.get().sticks_moving);
+
+	// WHEN: only the throttle input jumps
+	_manual_control_input_pub.publish({.timestamp_sample = _timestamp, .roll = 0.f, .pitch = 0.f, .yaw = 0.f,
+					   .throttle = -0.84f, .valid = true,
+					   .data_source = manual_control_setpoint_s::SOURCE_RC});
+	_manual_control.processInput(_timestamp += 20_ms);
+
+	// THEN: it is not published as an automatic-mode stick override request
+	ASSERT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_FALSE(_manual_control_setpoint_sub.get().sticks_moving);
+}
+
+TEST_F(SwitchTest, DirectionalStickOverrideRequiresConfirmation)
+{
+	// GIVEN: centered, valid RC input
+	manual_control_setpoint_s input{.timestamp_sample = _timestamp, .roll = 0.f, .pitch = 0.f, .yaw = 0.f,
+					.throttle = -1.f, .valid = true,
+					.data_source = manual_control_setpoint_s::SOURCE_RC};
+	_manual_control_input_pub.publish(input);
+	_manual_control.processInput(_timestamp += 20_ms);
+	ASSERT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_FALSE(_manual_control_setpoint_sub.get().sticks_moving);
+
+	// WHEN: a directional stick has a single-sample deflection
+	input.roll = 0.8f;
+	input.timestamp_sample = _timestamp;
+	_manual_control_input_pub.publish(input);
+	_manual_control.processInput(_timestamp += 20_ms);
+	ASSERT_TRUE(_manual_control_setpoint_sub.update());
+
+	// THEN: the single sample does not immediately request override
+	EXPECT_FALSE(_manual_control_setpoint_sub.get().sticks_moving);
+
+	// AND WHEN: the stick returns to center
+	input.roll = 0.f;
+	input.timestamp_sample = _timestamp;
+	_manual_control_input_pub.publish(input);
+	_manual_control.processInput(_timestamp += 50_ms);
+	ASSERT_TRUE(_manual_control_setpoint_sub.update());
+	EXPECT_FALSE(_manual_control_setpoint_sub.get().sticks_moving);
+
+	// BUT WHEN: a deliberate deflection is held for at least 150 ms
+	input.roll = 0.8f;
+
+	for (int i = 0; i < 4; ++i) {
+		input.timestamp_sample = _timestamp;
+		_manual_control_input_pub.publish(input);
+		_manual_control.processInput(_timestamp += 50_ms);
+		ASSERT_TRUE(_manual_control_setpoint_sub.update());
+	}
+
+	// THEN: the normal directional-stick override remains available
+	EXPECT_TRUE(_manual_control_setpoint_sub.get().sticks_moving);
 }

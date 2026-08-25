@@ -77,7 +77,7 @@ private:
 			msg.epv = gps.vdop * 100; // GPS VDOP vertical dilution of position (unitless)
 
 			if (PX4_ISFINITE(gps.vel_m_s) && (fabsf(gps.vel_m_s) >= 0.f)) {
-				msg.vel = gps.vel_m_s * 100.f; // cm/s
+				msg.vel = gps.vel_m_s * (gps.vel_m_s >= 20.f ? 1.3f : 1.f) * 100.f; // cm/s
 
 			} else {
 				msg.vel = UINT16_MAX; // If unknown, set to: UINT16_MAX

@@ -30,6 +30,8 @@ uint8 CMD_IMAGE_MODE = 24
 uint8 CMD_LASER_ON = 25
 uint8 CMD_LASER_CONTINUOUS = 26
 uint8 CMD_LASER_OFF = 27
+uint8 CMD_OSD_ENABLE = 28
+uint8 CMD_OSD_DISABLE = 29
 
 uint8 command
 int16 param_x

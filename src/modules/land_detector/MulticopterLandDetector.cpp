@@ -86,6 +86,8 @@ MulticopterLandDetector::MulticopterLandDetector()
 
 void MulticopterLandDetector::_update_topics()
 {
+	const hrt_abstime now = hrt_absolute_time();
+
 	vehicle_thrust_setpoint_s vehicle_thrust_setpoint;
 
 	if (_vehicle_thrust_setpoint_sub.update(&vehicle_thrust_setpoint)) {
@@ -113,6 +115,93 @@ void MulticopterLandDetector::_update_topics()
 
 	if (_takeoff_status_sub.update(&takeoff_status)) {
 		_takeoff_state = takeoff_status.takeoff_state;
+	}
+
+	_home_position_sub.update(&_home_position);
+	_position_setpoint_triplet_sub.update(&_position_setpoint_triplet);
+	_update_fast_touchdown(now);
+}
+
+bool MulticopterLandDetector::_fast_touchdown_landing_active() const
+{
+	const bool auto_landing_mode = _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND
+				       || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+				       || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	const bool auto_landing_intended =
+		_vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND
+		|| _vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+		|| _vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	const bool land_setpoint = _position_setpoint_triplet.current.valid
+				   && _position_setpoint_triplet.current.type == position_setpoint_s::SETPOINT_TYPE_LAND;
+
+	return _takeoff_state == takeoff_status_s::TAKEOFF_STATE_FLIGHT && auto_landing_mode
+	       && auto_landing_intended && land_setpoint;
+}
+
+bool MulticopterLandDetector::_fast_touchdown_allowed(hrt_abstime now) const
+{
+	const bool local_position_fresh = _vehicle_local_position.timestamp > 0
+					  && _vehicle_local_position.timestamp <= now
+					  && now - _vehicle_local_position.timestamp <= 100_ms;
+	const bool range_fused = (_vehicle_local_position.dist_bottom_sensor_bitfield
+				  & vehicle_local_position_s::DIST_BOTTOM_SENSOR_RANGE) != 0;
+	const bool estimator_near_ground = local_position_fresh
+					   && _vehicle_local_position.dist_bottom_valid
+					   && PX4_ISFINITE(_vehicle_local_position.dist_bottom)
+					   && _vehicle_local_position.dist_bottom >= 0.f
+					   && _vehicle_local_position.dist_bottom < 0.5f;
+	const bool descending = local_position_fresh && _vehicle_local_position.v_z_valid
+				&& PX4_ISFINITE(_vehicle_local_position.vz) && _vehicle_local_position.vz > 0.05f;
+
+	return _fast_touchdown_landing_active() && range_fused && estimator_near_ground
+	       && descending;
+}
+
+float MulticopterLandDetector::_height_above_home() const
+{
+	if (_home_position.valid_lpos && _vehicle_local_position.z_valid
+	    && PX4_ISFINITE(_home_position.z) && PX4_ISFINITE(_vehicle_local_position.z)) {
+		return _home_position.z - _vehicle_local_position.z;
+	}
+
+	return NAN;
+}
+
+void MulticopterLandDetector::_update_fast_touchdown(hrt_abstime now)
+{
+	distance_sensor_s newest_downward_laser{};
+	bool sample_updated = false;
+
+	for (auto &subscription : _distance_sensor_subs) {
+		distance_sensor_s sample{};
+
+		if (subscription.update(&sample)
+		    && sample.type == distance_sensor_s::MAV_DISTANCE_SENSOR_LASER
+		    && sample.orientation == distance_sensor_s::ROTATION_DOWNWARD_FACING
+		    && (!sample_updated || sample.timestamp > newest_downward_laser.timestamp)) {
+			newest_downward_laser = sample;
+			sample_updated = true;
+		}
+	}
+
+	const bool was_triggered = _fast_touchdown_detector.triggered();
+	const float height_above_home = _height_above_home();
+	_fast_touchdown_detector.update(now, _param_lndmc_td_enable.get(), _armed, _fast_touchdown_landing_active(),
+					_fast_touchdown_allowed(now), height_above_home, _param_lndmc_td_altitude.get(),
+					sample_updated ? &newest_downward_laser : nullptr,
+					_param_lndmc_td_distance.get(), _param_lndmc_td_max_distance.get(),
+					_param_lndmc_td_time.get() * 1_s);
+
+	if (_fast_touchdown_detector.triggered() && !was_triggered && !_fast_touchdown_logged) {
+		PX4_WARN("ToF fast touchdown: %.3f m at %.2f m above Home after %.1f ms",
+			 (double)_fast_touchdown_detector.triggerDistance(),
+			 (double)height_above_home,
+			 (double)_fast_touchdown_detector.confirmationTime() / 1000.0);
+		_fast_touchdown_logged = true;
+	}
+
+	if (!_armed) {
+		_fast_touchdown_logged = false;
 	}
 }
 
@@ -158,6 +247,10 @@ bool MulticopterLandDetector::_get_freefall_state()
 
 bool MulticopterLandDetector::_get_ground_contact_state()
 {
+	if (_fast_touchdown_detector.triggered()) {
+		return true;
+	}
+
 	const hrt_abstime time_now_us = hrt_absolute_time();
 
 	const bool lpos_available = ((time_now_us - _vehicle_local_position.timestamp) < 1_s);
@@ -253,6 +346,10 @@ bool MulticopterLandDetector::_get_ground_contact_state()
 
 bool MulticopterLandDetector::_get_maybe_landed_state()
 {
+	if (_fast_touchdown_detector.triggered()) {
+		return true;
+	}
+
 	hrt_abstime now = hrt_absolute_time();
 
 	float minimum_thrust_threshold{0.f};
@@ -293,7 +390,7 @@ bool MulticopterLandDetector::_get_maybe_landed_state()
 bool MulticopterLandDetector::_get_landed_state()
 {
 	// all maybe_landed conditions need to hold longer
-	return !_armed || _maybe_landed_hysteresis.get_state();
+	return !_armed || _fast_touchdown_detector.triggered() || _maybe_landed_hysteresis.get_state();
 }
 
 bool MulticopterLandDetector::_get_ground_effect_state()
@@ -315,9 +412,11 @@ bool MulticopterLandDetector::_is_close_to_ground()
 
 void MulticopterLandDetector::_set_hysteresis_factor(const int factor)
 {
-	_ground_contact_hysteresis.set_hysteresis_time_from(false, _param_lndmc_trig_time.get() * 1_s / 3 * factor);
-	_landed_hysteresis.set_hysteresis_time_from(false, _param_lndmc_trig_time.get() * 1_s / 3 * factor);
-	_maybe_landed_hysteresis.set_hysteresis_time_from(false, _param_lndmc_trig_time.get() * 1_s / 3 * factor);
+	const hrt_abstime state_trigger_time = _fast_touchdown_detector.triggered() ? 0
+					       : _param_lndmc_trig_time.get() * 1_s / 3 * factor;
+	_ground_contact_hysteresis.set_hysteresis_time_from(false, state_trigger_time);
+	_landed_hysteresis.set_hysteresis_time_from(false, state_trigger_time);
+	_maybe_landed_hysteresis.set_hysteresis_time_from(false, state_trigger_time);
 	_freefall_hysteresis.set_hysteresis_time_from(false, FREEFALL_TRIGGER_TIME_US);
 }
 

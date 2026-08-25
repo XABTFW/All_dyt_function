@@ -26,12 +26,14 @@ SDM50::SDM50(const char *port, uint8_t rotation) :
 	device::Device::DeviceId device_id{};
 	device_id.devid_s.devtype = DRV_DIST_DEVTYPE_SDM50;
 	device_id.devid_s.bus_type = device::Device::DeviceBusType_SERIAL;
-	_px4_rangefinder.set_device_id(device_id.devid);
+	_device_id = device_id.devid;
+	_px4_rangefinder.set_device_id(_device_id);
 	_px4_rangefinder.set_rangefinder_type(distance_sensor_s::MAV_DISTANCE_SENSOR_LASER);
 	_px4_rangefinder.set_min_distance(0.05f);
 	_px4_rangefinder.set_max_distance(50.f);
 	_px4_rangefinder.set_fov(math::radians(1.7f));
 }
+
 SDM50::~SDM50()
 {
 	ScheduleClear();
@@ -84,6 +86,9 @@ bool SDM50::open_serial()
 	_parse_state = ParseState::WaitHeader;
 	_distance_low = 0;
 	_distance_high = 0;
+	_last_velocity_sample = 0;
+	_last_velocity_distance_m = NAN;
+	_closing_speed_m_s = NAN;
 	if (!send_start_command()) {
 		close_serial();
 		return false;
@@ -209,10 +214,61 @@ void SDM50::parse_byte(uint8_t byte)
 			const uint16_t distance_mm = static_cast<uint16_t>(_distance_low | (_distance_high << 8));
 			const hrt_abstime timestamp_sample = hrt_absolute_time();
 			const bool valid = distance_mm >= MIN_DISTANCE_MM && distance_mm < MAX_DISTANCE_MM;
+			const float distance_m = static_cast<float>(distance_mm) * 0.001f;
+
+			if (valid) {
+				constexpr float velocity_filter_tau_s = 0.3f;
+				constexpr float min_velocity_dt_s = 0.02f;
+				constexpr float max_velocity_dt_s = 2.5f;
+				constexpr float max_abs_closing_speed_m_s = 50.f;
+				bool update_velocity_baseline = _last_velocity_sample == 0
+								|| !PX4_ISFINITE(_last_velocity_distance_m);
+
+				if (!update_velocity_baseline) {
+					const float dt_s = (timestamp_sample - _last_velocity_sample) * 1e-6f;
+
+					if (dt_s >= min_velocity_dt_s && dt_s <= max_velocity_dt_s) {
+						const float raw_closing_speed_m_s = (_last_velocity_distance_m - distance_m) / dt_s;
+
+						if (PX4_ISFINITE(raw_closing_speed_m_s)
+						    && fabsf(raw_closing_speed_m_s) <= max_abs_closing_speed_m_s) {
+							const float alpha = dt_s / (velocity_filter_tau_s + dt_s);
+							_closing_speed_m_s = PX4_ISFINITE(_closing_speed_m_s) ?
+								_closing_speed_m_s + alpha * (raw_closing_speed_m_s - _closing_speed_m_s) :
+								raw_closing_speed_m_s;
+						}
+
+						update_velocity_baseline = true;
+
+					} else if (dt_s > max_velocity_dt_s) {
+						_closing_speed_m_s = NAN;
+						update_velocity_baseline = true;
+					}
+				}
+
+				if (update_velocity_baseline) {
+					_last_velocity_sample = timestamp_sample;
+					_last_velocity_distance_m = distance_m;
+				}
+
+			} else {
+				_last_velocity_sample = 0;
+				_last_velocity_distance_m = NAN;
+				_closing_speed_m_s = NAN;
+			}
 
 			_last_distance_mm.store(distance_mm);
 			_last_sample.store(timestamp_sample);
-			_px4_rangefinder.update(timestamp_sample, static_cast<float>(distance_mm) * 0.001f, valid ? 100 : 0);
+			_px4_rangefinder.update(timestamp_sample, distance_m, valid ? 100 : 0);
+
+			sdm50_status_s status{};
+			status.timestamp = hrt_absolute_time();
+			status.timestamp_sample = timestamp_sample;
+			status.device_id = _device_id;
+			status.distance_m = valid ? distance_m : NAN;
+			status.closing_speed_m_s = valid ? _closing_speed_m_s : NAN;
+			status.valid = valid;
+			_sdm50_status_pub.publish(status);
 			perf_count(_sample_perf);
 			_parse_state = ParseState::WaitHeader;
 
@@ -255,6 +311,7 @@ int SDM50::print_status()
 void SDM50::print_info()
 {
 	PX4_INFO("port: %s, fd: %d, baud: 460800", _port, _fd);
+	PX4_INFO("closing speed: %.2f m/s", static_cast<double>(_closing_speed_m_s));
 	const uint32_t rx_byte_count = _rx_byte_count.load();
 	PX4_INFO("rx bytes: %u, headers 5A/5C/55: %u/%u/%u",
 		 static_cast<unsigned>(rx_byte_count),

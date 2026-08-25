@@ -93,6 +93,18 @@ void Ekf::controlGnssHeightFusion(const gnssSample &gps_sample)
 				&& _params.ekf2_hgt_ref == static_cast<int32_t>(HeightSensor::GNSS)
 				&& isNewestSampleRecent(_time_last_gps_buffer_push, 2 * GNSS_MAX_INTERVAL);
 
+		// Recover if GNSS height fusion became active before the global altitude origin was initialized.
+		// Without an altitude origin the local height estimate can remain valid, but global altitude and RTL stay invalid.
+		if (_control_status.flags.gps_hgt && altitude_initialisation_conditions_passing) {
+			ECL_INFO("initializing global altitude from %s", HGT_SRC_NAME);
+			_height_sensor_ref = HeightSensor::GNSS;
+			_information_events.flags.reset_hgt_to_gps = true;
+			initialiseAltitudeTo(measurement, measurement_var);
+			bias_est.reset();
+			resetAidSourceStatusZeroInnovation(aid_src);
+			aid_src.time_last_fuse = _time_delayed_us;
+		}
+
 		if (_control_status.flags.gps_hgt) {
 			if (continuing_conditions_passing) {
 

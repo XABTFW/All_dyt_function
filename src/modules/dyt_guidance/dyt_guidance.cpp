@@ -19,7 +19,9 @@
 #include <uORB/SubscriptionInterval.hpp>
 #include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/distance_sensor.h>
+#include <uORB/topics/cooperative_rendezvous_status.h>
 #include <uORB/topics/dyt_command.h>
+#include <uORB/topics/dyt_guidance_command.h>
 #include <uORB/topics/dyt_guidance_status.h>
 #include <uORB/topics/dyt_target.h>
 #include <uORB/topics/follower_info.h>
@@ -28,6 +30,7 @@
 #include <uORB/topics/manual_control_switches.h>
 #include <uORB/topics/offboard_control_mode.h>
 #include <uORB/topics/parameter_update.h>
+#include <uORB/topics/sdm50_status.h>
 #include <uORB/topics/trajectory_setpoint.h>
 #include <uORB/topics/airspeed_validated.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
@@ -123,6 +126,11 @@ private:
 	void update_subscriptions();
 	void update_vehicle_id();
 	void update_params_if_needed();
+	void handle_ground_guidance_commands(hrt_abstime now);
+	void update_ground_command_result(hrt_abstime now);
+	bool cooperative_status_fresh() const;
+	uint8_t effective_vehicle_type() const;
+	uint8_t actual_guidance_phase() const;
 
 	float aux_value(int index) const;
 	bool aux_switch_active(int index) const;
@@ -146,6 +154,8 @@ private:
 	void publish_offboard_mode(bool position_mode);
 	void request_offboard_mode();
 	void publish_status();
+	void update_attitude_diagnostic(hrt_abstime now);
+	void reset_attitude_diagnostic();
 	void capture_track_handoff_velocity();
 	float track_handoff_blend(hrt_abstime now) const;
 
@@ -167,6 +177,7 @@ private:
 	bool target_usable() const;
 	bool intercept_allowed() const;
 	void update_net_release_trigger(hrt_abstime now);
+	Vector3f net_release_pitch_accel_ned() const;
 	bool update_laser_distance(hrt_abstime now);
 	void send_net_release_command(hrt_abstime now);
 	void clear_net_release_trigger();
@@ -179,6 +190,10 @@ private:
 	void apply_net_decel_velocity_scale(Vector2f &vel_xy) const;
 	Vector3f net_decel_accel_ned(hrt_abstime now, const Vector3f &vehicle_velocity);
 	bool midcourse_handoff_active() const;
+	bool vehicle_status_fresh() const;
+	bool protected_navigation_state(uint8_t nav_state) const;
+	bool offboard_control_active() const;
+	bool offboard_preparation_allowed() const;
 	bool vehicle_control_active() const;
 	TrackProfile follow_profile() const;
 	TrackProfile intercept_profile() const;
@@ -247,19 +262,29 @@ private:
 	hrt_abstime _candidate_ignored_sample_time{0};
 	hrt_abstime _auto_lock_last_sample_time{0};
 	hrt_abstime _last_laser_sample_time{0};
+	hrt_abstime _net_release_pitch_until{0};
 	hrt_abstime _net_hold_start_time{0};
 	hrt_abstime _net_decel_until{0};
 	bool _candidate_lock_active{false};
 	bool _net_release_sent{false};
+	bool _net_release_pitch_pending{false};
 	bool _prev_manual_fire_request{false};
 	bool _net_hold_active{false};
 	bool _net_brake_active{false};
 	bool _net_decel_pending{false};
 	bool _net_decel_low_speed_active{false};
 	uint32_t _command_pub_count{0};
+	uint32_t _net_trigger_count{0};
+	uint32_t _ground_command_sequence{0};
+	uint8_t _gcs_phase_request{0};
+	uint8_t _ground_command_phase{0};
+	uint8_t _ground_command_result{dyt_guidance_status_s::COMMAND_RESULT_NONE};
+	hrt_abstime _ground_command_received_time{0};
+	bool _have_ground_command{false};
 	float _scan_yaw_deg{0.f};
 	float _scan_pitch_deg{0.f};
 	float _laser_distance_m{NAN};
+	sdm50_status_s _sdm50_status{};
 	float _net_decel_initial_speed{0.f};
 	float _net_decel_target_speed{0.f};
 	hrt_abstime _next_midcourse_point_time{0};
@@ -294,6 +319,7 @@ private:
 	airspeed_validated_s _airspeed_validated{};
 	manual_control_setpoint_s _manual_control{};
 	manual_control_switches_s _manual_switches{};
+	cooperative_rendezvous_status_s _cooperative_status{};
 
 	Vector3f _hold_position{};
 	float _hold_yaw{0.f};
@@ -308,11 +334,27 @@ private:
 	Vector3f _acceleration_sp{};
 	float _yaw_sp{NAN};
 	float _yaw_rate_sp{NAN};
+	hrt_abstime _attitude_diag_timestamp{0};
+	bool _attitude_diag_near{false};
+	float _attitude_diag_range_m{NAN};
+	float _desired_roll_rad{NAN};
+	float _desired_pitch_rad{NAN};
+	float _actual_roll_rad{NAN};
+	float _actual_pitch_rad{NAN};
+	float _roll_error_rad{NAN};
+	float _pitch_error_rad{NAN};
+	float _attitude_error_rad{NAN};
+	float _max_abs_roll_error_rad{NAN};
+	float _max_abs_pitch_error_rad{NAN};
+	float _max_attitude_error_rad{NAN};
 	hrt_abstime _prev_los_update{0};
 	hrt_abstime _last_track_setpoint_time{0};
 	bool _los_filter_initialized{false};
 
 	uORB::Subscription _dyt_target_sub{ORB_ID(dyt_target)};
+	uORB::Subscription _sdm50_status_sub{ORB_ID(sdm50_status)};
+	uORB::Subscription _dyt_guidance_command_sub{ORB_ID(dyt_guidance_command)};
+	uORB::Subscription _cooperative_status_sub{ORB_ID(cooperative_rendezvous_status)};
 	uORB::SubscriptionMultiArray<distance_sensor_s> _distance_sensor_subs{ORB_ID::distance_sensor};
 	uORB::Subscription _follower_info_sub{ORB_ID(follower_info)};
 	uORB::Subscription _gripper_sub{ORB_ID(gripper)};
@@ -334,6 +376,7 @@ private:
 	uORB::Publication<dyt_guidance_status_s> _dyt_guidance_status_pub{ORB_ID(dyt_guidance_status)};
 
 	DEFINE_PARAMETERS(
+		(ParamInt<px4::params::DYT_VEH_TYPE>) _param_vehicle_type,
 		(ParamInt<px4::params::DYTG_ACT_AUX>) _param_act_aux,
 		(ParamInt<px4::params::DYTG_ACT_BTN>) _param_act_btn,
 		(ParamInt<px4::params::DYTG_INT_AUX>) _param_int_aux,
@@ -380,6 +423,10 @@ private:
 		(ParamFloat<px4::params::DYTG_MAXACC>) _param_max_acc,
 		(ParamFloat<px4::params::DYTG_RNG_MIN>) _param_net_range_min,
 		(ParamFloat<px4::params::DYTG_RNG_MAX>) _param_net_range_max,
+		(ParamInt<px4::params::DYTG_SZ_MS>) _param_net_release_pitch_ms,
+		(ParamFloat<px4::params::DYTG_ALP_K>) _param_alpha_gain,
+		(ParamFloat<px4::params::DYTG_ALP_MAX>) _param_alpha_max_deg,
+		(ParamFloat<px4::params::DYTG_ALP_VMIN>) _param_alpha_min_speed,
 		(ParamInt<px4::params::DYTG_FIRE_AUX>) _param_manual_fire_aux,
 		(ParamInt<px4::params::DYTG_FIRE_BTN>) _param_manual_fire_btn,
 		(ParamInt<px4::params::DYTG_FIRE_EN>) _param_net_release_enable,
@@ -438,7 +485,7 @@ DytGuidance::DytGuidance() :
 
 bool DytGuidance::init()
 {
-	ScheduleOnInterval(20_ms);
+	ScheduleOnInterval(5_ms);
 	return true;
 }
 
@@ -514,9 +561,10 @@ void DytGuidance::show_status()
 		 _net_decel_until > hrt_absolute_time(),
 		 static_cast<double>(_net_decel_initial_speed),
 		 static_cast<double>(_net_decel_target_speed));
-	PX4_INFO("net fire: en=%ld range=%.2f m window=[%.2f, %.2f] m fresh=%d sent=%d",
+	PX4_INFO("net fire: en=%ld range=%.2f m closing=%.2f m/s window=[%.2f, %.2f] m fresh=%d sent=%d",
 		 static_cast<long>(_param_net_release_enable.get()),
 		 static_cast<double>(_laser_distance_m),
+		 static_cast<double>(_sdm50_status.closing_speed_m_s),
 		 static_cast<double>(_param_net_range_min.get()),
 		 static_cast<double>(_param_net_range_max.get()),
 		 _last_laser_sample_time > 0 && hrt_elapsed_time(&_last_laser_sample_time) <= 200_ms,
@@ -605,6 +653,8 @@ void DytGuidance::update_subscriptions()
 	_airspeed_validated_sub.update(&_airspeed_validated);
 	_manual_control_sub.update(&_manual_control);
 	_manual_switches_sub.update(&_manual_switches);
+	_cooperative_status_sub.update(&_cooperative_status);
+	handle_ground_guidance_commands(hrt_absolute_time());
 
 	update_gripper_release_trigger(hrt_absolute_time());
 
@@ -614,6 +664,12 @@ void DytGuidance::update_subscriptions()
 		_last_target = target;
 		_have_target = true;
 		handle_new_target(target);
+	}
+
+	sdm50_status_s sdm50_status{};
+
+	while (_sdm50_status_sub.update(&sdm50_status)) {
+		_sdm50_status = sdm50_status;
 	}
 
 	follower_info_s info{};
@@ -641,6 +697,111 @@ void DytGuidance::update_subscriptions()
 			_last_midcourse_target_time = hrt_absolute_time();
 			_midcourse_handoff_latched = true;
 		}
+	}
+}
+
+void DytGuidance::handle_ground_guidance_commands(hrt_abstime now)
+{
+	dyt_guidance_command_s command{};
+
+	while (_dyt_guidance_command_sub.update(&command)) {
+		const bool target_system_ok = command.target_system == 0 ||
+					      command.target_system == _vehicle_status.system_id;
+		const bool target_component_ok = command.target_component == 0 ||
+						 command.target_component == _vehicle_status.component_id;
+		const bool sequence_is_newer = !_have_ground_command ||
+					       static_cast<int32_t>(command.sequence - _ground_command_sequence) > 0;
+
+		if (!target_system_ok || !target_component_ok || !sequence_is_newer) {
+			continue;
+		}
+
+		_have_ground_command = true;
+		_ground_command_sequence = command.sequence;
+		_ground_command_phase = command.phase;
+		_ground_command_received_time = now;
+		_ground_command_result = dyt_guidance_status_s::COMMAND_RESULT_DENIED;
+
+		const bool valid_phase = command.phase == dyt_guidance_command_s::PHASE_MIDCOURSE ||
+					 command.phase == dyt_guidance_command_s::PHASE_TERMINAL;
+		const bool phase_preconditions_ok = command.phase == dyt_guidance_command_s::PHASE_MIDCOURSE ?
+						  (preconditions_ok() && local_position_global_valid() &&
+						   _param_coop_enable.get() > 0) : preconditions_ok();
+
+		if (valid_phase && phase_preconditions_ok) {
+			_gcs_phase_request = command.phase;
+			_ground_command_result = dyt_guidance_status_s::COMMAND_RESULT_PENDING;
+			PX4_INFO("DYT GCS phase request accepted for transition: phase=%u seq=%lu",
+				 static_cast<unsigned>(command.phase),
+				 static_cast<unsigned long>(command.sequence));
+
+		} else {
+			PX4_WARN("DYT GCS phase request denied: phase=%u armed=%d failsafe=%d position=%d seq=%lu",
+				 static_cast<unsigned>(command.phase), preconditions_ok(), _vehicle_status.failsafe,
+				 local_position_global_valid(), static_cast<unsigned long>(command.sequence));
+		}
+	}
+}
+
+bool DytGuidance::cooperative_status_fresh() const
+{
+	return _cooperative_status.timestamp != 0 &&
+	       hrt_elapsed_time(&_cooperative_status.timestamp) < 300_ms;
+}
+
+uint8_t DytGuidance::effective_vehicle_type() const
+{
+	const int32_t configured_type = _param_vehicle_type.get();
+
+	if (configured_type == dyt_guidance_status_s::VEHICLE_TYPE_FIGHTER ||
+	    configured_type == dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE) {
+		return static_cast<uint8_t>(configured_type);
+	}
+
+	return _vehicle_id == 2 ? dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE :
+	       dyt_guidance_status_s::VEHICLE_TYPE_FIGHTER;
+}
+
+uint8_t DytGuidance::actual_guidance_phase() const
+{
+	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
+		return dyt_guidance_status_s::PHASE_DISARMED;
+	}
+
+	if (_state != TaskState::Idle && _state != TaskState::Abort) {
+		return dyt_guidance_status_s::PHASE_TERMINAL;
+	}
+
+	if (cooperative_status_fresh() && _cooperative_status.active) {
+		return dyt_guidance_status_s::PHASE_MIDCOURSE;
+	}
+
+	return dyt_guidance_status_s::PHASE_INITIAL;
+}
+
+void DytGuidance::update_ground_command_result(hrt_abstime now)
+{
+	if (_ground_command_result != dyt_guidance_status_s::COMMAND_RESULT_PENDING) {
+		return;
+	}
+
+	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED || _vehicle_status.failsafe) {
+		_ground_command_result = dyt_guidance_status_s::COMMAND_RESULT_FAILED;
+		return;
+	}
+
+	const bool transition_complete =
+		(_ground_command_phase == dyt_guidance_command_s::PHASE_MIDCOURSE &&
+		 cooperative_status_fresh() && _cooperative_status.active &&
+		 (_state == TaskState::Idle || _state == TaskState::Abort)) ||
+		(_ground_command_phase == dyt_guidance_command_s::PHASE_TERMINAL &&
+		 _state != TaskState::Idle && _state != TaskState::Abort);
+
+	if (transition_complete) {
+		_ground_command_result = dyt_guidance_status_s::COMMAND_RESULT_ACCEPTED;
+
+	} else if (_ground_command_received_time != 0 && now - _ground_command_received_time > 3_s) {
+		_ground_command_result = dyt_guidance_status_s::COMMAND_RESULT_FAILED;
 	}
 }
 
@@ -694,6 +855,14 @@ bool DytGuidance::payload_switch_active() const
 
 bool DytGuidance::activation_requested() const
 {
+	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE) {
+		return false;
+	}
+
+	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_TERMINAL) {
+		return true;
+	}
+
 	return _manual_activation || aux_switch_active(_param_act_aux.get()) || button_active(_param_act_btn.get())
 	       || payload_switch_active();
 }
@@ -701,6 +870,14 @@ bool DytGuidance::activation_requested() const
 bool DytGuidance::midcourse_pointing_requested() const
 {
 	if (_param_coop_enable.get() <= 0) {
+		return false;
+	}
+
+	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE) {
+		return true;
+	}
+
+	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_TERMINAL) {
 		return false;
 	}
 
@@ -995,13 +1172,44 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 	const bool manual_fire_rising = manual_fire_request && !_prev_manual_fire_request;
 	_prev_manual_fire_request = manual_fire_request;
 
-	if (!target_usable() || _net_release_sent) {
+	if (!target_usable()) {
+		clear_net_release_trigger();
 		return;
 	}
 
+	if (_net_release_pitch_until != 0) {
+		if (now >= _net_release_pitch_until) {
+			const bool release_pending = _net_release_pitch_pending;
+			_net_release_pitch_until = 0;
+			_net_release_pitch_pending = false;
+
+			if (release_pending && !_net_release_sent) {
+				send_net_release_command(now);
+				_net_release_sent = true;
+			}
+		}
+
+		return;
+	}
+
+	if (_net_release_sent) {
+		return;
+	}
+
+	const int32_t pitch_duration_ms = math::constrain(_param_net_release_pitch_ms.get(), int32_t{0}, int32_t{2000});
+	auto start_pitch_then_release = [this, now, pitch_duration_ms]() {
+		if (pitch_duration_ms > 0) {
+			_net_release_pitch_until = now + static_cast<hrt_abstime>(pitch_duration_ms) * 1000ULL;
+			_net_release_pitch_pending = true;
+
+		} else {
+			send_net_release_command(now);
+			_net_release_sent = true;
+		}
+	};
+
 	if (manual_fire_rising) {
-		send_net_release_command(now);
-		_net_release_sent = true;
+		start_pitch_then_release();
 		return;
 	}
 
@@ -1015,9 +1223,61 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 	}
 
 	if (_laser_distance_m >= range_min && _laser_distance_m <= range_max) {
-		send_net_release_command(now);
-		_net_release_sent = true;
+		start_pitch_then_release();
 	}
+}
+
+Vector3f DytGuidance::net_release_pitch_accel_ned() const
+{
+	if (_net_release_pitch_until == 0 || !_vehicle_local_position.v_xy_valid || !_vehicle_local_position.v_z_valid
+	    || _vehicle_local_position.timestamp == 0 || hrt_elapsed_time(&_vehicle_local_position.timestamp) > 200_ms
+	    || _vehicle_attitude.timestamp == 0 || hrt_elapsed_time(&_vehicle_attitude.timestamp) > 200_ms) {
+		return Vector3f{};
+	}
+
+	const Vector3f velocity(_vehicle_local_position.vx, _vehicle_local_position.vy, _vehicle_local_position.vz);
+	const Quatf attitude_q(_vehicle_attitude.q);
+
+	if (!velocity.isAllFinite() || !attitude_q.isAllFinite()) {
+		return Vector3f{};
+	}
+
+	const float min_speed = math::constrain(_param_alpha_min_speed.get(), 0.1f, 10.f);
+	const float speed = velocity.norm();
+	const Dcmf body_to_ned(attitude_q);
+	const Vector3f body_forward_ned = body_to_ned * Vector3f(1.f, 0.f, 0.f);
+	const Vector3f launch_axis_ned = body_to_ned * Vector3f(0.f, 0.f, -1.f);
+
+	if (!PX4_ISFINITE(speed) || speed < min_speed || !body_forward_ned.isAllFinite()
+	    || !launch_axis_ned.isAllFinite()) {
+		return Vector3f{};
+	}
+
+	// NED +Z points down. Match the reference implementation by correcting the
+	// elevation difference between the velocity vector and the body -Z launch axis.
+	const float launch_horizontal = Vector2f(launch_axis_ned(0), launch_axis_ned(1)).norm();
+	const float velocity_horizontal = Vector2f(velocity(0), velocity(1)).norm();
+	const float launch_elevation = atan2f(-launch_axis_ned(2), launch_horizontal);
+	const float velocity_elevation = atan2f(-velocity(2), velocity_horizontal);
+	const float elevation_difference = velocity_elevation - launch_elevation;
+	const float gain = math::constrain(_param_alpha_gain.get(), -10.f, 10.f);
+	const float max_correction = math::radians(math::constrain(fabsf(_param_alpha_max_deg.get()), 0.f, 60.f));
+	const float correction_angle = math::constrain(gain * elevation_difference, -max_correction, max_correction);
+
+	if (!PX4_ISFINITE(correction_angle)) {
+		return Vector3f{};
+	}
+
+	Vector2f body_forward_xy(body_forward_ned(0), body_forward_ned(1));
+	const float body_forward_xy_norm = body_forward_xy.norm();
+
+	if (!PX4_ISFINITE(body_forward_xy_norm) || body_forward_xy_norm < 0.1f) {
+		return Vector3f{};
+	}
+
+	body_forward_xy *= 1.f / body_forward_xy_norm;
+	const float forward_accel = -CONSTANTS_ONE_G * tanf(correction_angle);
+	return Vector3f(body_forward_xy(0), body_forward_xy(1), 0.f) * forward_accel;
 }
 
 bool DytGuidance::update_laser_distance(hrt_abstime now)
@@ -1079,6 +1339,7 @@ void DytGuidance::send_net_release_command(hrt_abstime now)
 	cmd.source_component = _vehicle_status.component_id;
 	cmd.from_external = false;
 	_vehicle_command_pub.publish(cmd);
+	++_net_trigger_count;
 	start_net_hold_after_release();
 }
 
@@ -1086,6 +1347,8 @@ void DytGuidance::clear_net_release_trigger()
 {
 	_last_laser_sample_time = 0;
 	_laser_distance_m = NAN;
+	_net_release_pitch_until = 0;
+	_net_release_pitch_pending = false;
 }
 
 void DytGuidance::update_gripper_release_trigger(hrt_abstime now)
@@ -1143,6 +1406,10 @@ void DytGuidance::clear_net_hold()
 
 void DytGuidance::publish_net_brake_setpoint()
 {
+	if (!offboard_control_active()) {
+		return;
+	}
+
 	const hrt_abstime now = hrt_absolute_time();
 	Vector2f vehicle_velocity_xy(_vehicle_local_position.vx, _vehicle_local_position.vy);
 	float speed = vehicle_velocity_xy.norm();
@@ -1284,8 +1551,44 @@ bool DytGuidance::midcourse_handoff_active() const
 	return midcourse_target_position_local(target_position);
 }
 
+bool DytGuidance::vehicle_status_fresh() const
+{
+	return _vehicle_status.timestamp != 0 && _vehicle_status.timestamp <= hrt_absolute_time()
+	       && hrt_elapsed_time(&_vehicle_status.timestamp) < 1_s;
+}
+
+bool DytGuidance::protected_navigation_state(uint8_t nav_state) const
+{
+	return nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION
+	       || nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER
+	       || nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+	       || nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND;
+}
+
+bool DytGuidance::offboard_control_active() const
+{
+	return vehicle_status_fresh() && !_vehicle_status.failsafe
+	       && _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD
+	       && _vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
+}
+
+bool DytGuidance::offboard_preparation_allowed() const
+{
+	if (!vehicle_status_fresh() || _vehicle_status.failsafe
+	    || protected_navigation_state(_vehicle_status.nav_state_user_intention)) {
+		return false;
+	}
+
+	return !protected_navigation_state(_vehicle_status.nav_state)
+	       || _vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
+}
+
 bool DytGuidance::vehicle_control_active() const
 {
+	if (!offboard_control_active()) {
+		return false;
+	}
+
 	// States where the seeker would command aircraft motion (trajectory/offboard setpoints).
 	const bool tracking = (_state == TaskState::TrackFollow || _state == TaskState::TrackIntercept);
 
@@ -1314,6 +1617,10 @@ DytGuidance::TrackProfile DytGuidance::intercept_profile() const
 
 void DytGuidance::publish_hold_setpoint()
 {
+	if (!offboard_control_active()) {
+		return;
+	}
+
 	_last_track_setpoint_time = 0;
 
 	trajectory_setpoint_s setpoint{};
@@ -1338,13 +1645,20 @@ void DytGuidance::publish_hold_setpoint()
 
 void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 {
+	if (!offboard_control_active()) {
+		return;
+	}
+
 	const hrt_abstime now = hrt_absolute_time();
 	update_net_release_trigger(now);
 
 	if (!update_los_estimate(now)) {
+		_attitude_diag_timestamp = 0;
 		publish_hold_setpoint();
 		return;
 	}
+
+	update_attitude_diagnostic(now);
 
 	Vector3f vehicle_velocity(_vehicle_local_position.vx, _vehicle_local_position.vy, _vehicle_local_position.vz);
 
@@ -1489,6 +1803,7 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 	los_acc(1) *= xy_guard_scale;
 
 	_acceleration_sp = pn_acc + los_acc + damp_acc;
+	_acceleration_sp += net_release_pitch_accel_ned();
 	_acceleration_sp += net_decel_accel_ned(now, vehicle_velocity);
 
 	Vector2f acc_xy(_acceleration_sp(0), _acceleration_sp(1));
@@ -1532,6 +1847,10 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 
 void DytGuidance::publish_offboard_mode(bool position_mode)
 {
+	if (!offboard_preparation_allowed()) {
+		return;
+	}
+
 	offboard_control_mode_s mode{};
 	mode.timestamp = hrt_absolute_time();
 	mode.position = position_mode;
@@ -1546,6 +1865,10 @@ void DytGuidance::publish_offboard_mode(bool position_mode)
 
 void DytGuidance::request_offboard_mode()
 {
+	if (!offboard_preparation_allowed()) {
+		return;
+	}
+
 	const hrt_abstime now = hrt_absolute_time();
 
 	if ((now - _last_offboard_request) < 1_s) {
@@ -1569,8 +1892,19 @@ void DytGuidance::request_offboard_mode()
 
 void DytGuidance::publish_status()
 {
+	const hrt_abstime now = hrt_absolute_time();
 	dyt_guidance_status_s status{};
-	status.timestamp = hrt_absolute_time();
+	status.timestamp = now;
+	status.command_sequence = _ground_command_sequence;
+	status.net_trigger_count = _net_trigger_count;
+	status.vehicle_type = effective_vehicle_type();
+	status.guidance_phase = actual_guidance_phase();
+	status.gcs_phase_request = _gcs_phase_request;
+	status.command_phase = _ground_command_phase;
+	status.command_result = _ground_command_result;
+	status.net_trigger_sent = _net_release_sent;
+	status.midcourse_active = cooperative_status_fresh() && _cooperative_status.active;
+	status.midcourse_target_valid = cooperative_status_fresh() && _cooperative_status.target_valid;
 	status.state = static_cast<uint8_t>(_state);
 	status.requested_submode = _requested_submode;
 
@@ -1596,8 +1930,106 @@ void DytGuidance::publish_status()
 	_acceleration_sp.copyTo(status.acceleration_sp);
 	status.yaw_sp = _yaw_sp;
 	status.yaw_rate_sp = _yaw_rate_sp;
+	const bool tracking = _state == TaskState::TrackFollow || _state == TaskState::TrackIntercept;
+	const bool attitude_diag_valid = tracking && _attitude_diag_timestamp != 0 && now >= _attitude_diag_timestamp
+					 && now - _attitude_diag_timestamp <= 100_ms;
+	status.attitude_diag_valid = attitude_diag_valid;
+	status.attitude_diag_near = attitude_diag_valid && _attitude_diag_near;
+	status.attitude_diag_range_m = attitude_diag_valid ? _attitude_diag_range_m : NAN;
+	status.desired_roll_rad = attitude_diag_valid ? _desired_roll_rad : NAN;
+	status.desired_pitch_rad = attitude_diag_valid ? _desired_pitch_rad : NAN;
+	status.actual_roll_rad = attitude_diag_valid ? _actual_roll_rad : NAN;
+	status.actual_pitch_rad = attitude_diag_valid ? _actual_pitch_rad : NAN;
+	status.roll_error_rad = attitude_diag_valid ? _roll_error_rad : NAN;
+	status.pitch_error_rad = attitude_diag_valid ? _pitch_error_rad : NAN;
+	status.attitude_error_rad = attitude_diag_valid ? _attitude_error_rad : NAN;
+	status.max_abs_roll_error_rad = _max_abs_roll_error_rad;
+	status.max_abs_pitch_error_rad = _max_abs_pitch_error_rad;
+	status.max_attitude_error_rad = _max_attitude_error_rad;
 
 	_dyt_guidance_status_pub.publish(status);
+}
+
+void DytGuidance::update_attitude_diagnostic(hrt_abstime now)
+{
+	_attitude_diag_timestamp = 0;
+	_attitude_diag_near = false;
+	_attitude_diag_range_m = NAN;
+
+	if (_vehicle_attitude.timestamp == 0 || now < _vehicle_attitude.timestamp
+	    || now - _vehicle_attitude.timestamp > 200_ms || !_los_ned.isAllFinite()
+	    || _los_ned.norm_squared() < 1e-6f) {
+		return;
+	}
+
+	Quatf actual_attitude(_vehicle_attitude.q);
+
+	if (!actual_attitude.isAllFinite() || actual_attitude.norm_squared() < 1e-6f) {
+		return;
+	}
+
+	actual_attitude.normalize();
+	const Eulerf actual_euler(actual_attitude);
+	const Vector3f los_ned = _los_ned.normalized();
+	const float yaw = actual_euler.psi();
+	const float cos_yaw = cosf(yaw);
+	const float sin_yaw = sinf(yaw);
+	const float los_yaw_x = cos_yaw * los_ned(0) + sin_yaw * los_ned(1);
+	const float los_yaw_y = -sin_yaw * los_ned(0) + cos_yaw * los_ned(1);
+	const float desired_roll = asinf(math::constrain(los_yaw_y, -1.f, 1.f));
+	const float desired_pitch = atan2f(-los_yaw_x, -los_ned(2));
+	const Quatf desired_attitude(Eulerf(desired_roll, desired_pitch, yaw));
+	const Quatf attitude_error = (actual_attitude.inversed() * desired_attitude).canonical();
+	const float total_error = 2.f * acosf(math::constrain(fabsf(attitude_error(0)), 0.f, 1.f));
+
+	_desired_roll_rad = desired_roll;
+	_desired_pitch_rad = desired_pitch;
+	_actual_roll_rad = actual_euler.phi();
+	_actual_pitch_rad = actual_euler.theta();
+	_roll_error_rad = matrix::wrap_pi(desired_roll - _actual_roll_rad);
+	_pitch_error_rad = matrix::wrap_pi(desired_pitch - _actual_pitch_rad);
+	_attitude_error_rad = total_error;
+	_attitude_diag_timestamp = now;
+
+	const bool range_fresh = _sdm50_status.valid && _sdm50_status.timestamp_sample != 0
+				 && now >= _sdm50_status.timestamp_sample
+				 && now - _sdm50_status.timestamp_sample <= 200_ms
+				 && PX4_ISFINITE(_sdm50_status.distance_m);
+
+	if (range_fresh) {
+		_attitude_diag_range_m = _sdm50_status.distance_m;
+		const float near_range_m = _param_net_range_max.get();
+		_attitude_diag_near = PX4_ISFINITE(near_range_m) && near_range_m >= 0.05f
+				      && _attitude_diag_range_m <= near_range_m;
+	}
+
+	if (_attitude_diag_near) {
+		const float abs_roll_error = fabsf(_roll_error_rad);
+		const float abs_pitch_error = fabsf(_pitch_error_rad);
+		_max_abs_roll_error_rad = !PX4_ISFINITE(_max_abs_roll_error_rad) ? abs_roll_error :
+					  math::max(_max_abs_roll_error_rad, abs_roll_error);
+		_max_abs_pitch_error_rad = !PX4_ISFINITE(_max_abs_pitch_error_rad) ? abs_pitch_error :
+					   math::max(_max_abs_pitch_error_rad, abs_pitch_error);
+		_max_attitude_error_rad = !PX4_ISFINITE(_max_attitude_error_rad) ? total_error :
+					  math::max(_max_attitude_error_rad, total_error);
+	}
+}
+
+void DytGuidance::reset_attitude_diagnostic()
+{
+	_attitude_diag_timestamp = 0;
+	_attitude_diag_near = false;
+	_attitude_diag_range_m = NAN;
+	_desired_roll_rad = NAN;
+	_desired_pitch_rad = NAN;
+	_actual_roll_rad = NAN;
+	_actual_pitch_rad = NAN;
+	_roll_error_rad = NAN;
+	_pitch_error_rad = NAN;
+	_attitude_error_rad = NAN;
+	_max_abs_roll_error_rad = NAN;
+	_max_abs_pitch_error_rad = NAN;
+	_max_attitude_error_rad = NAN;
 }
 
 void DytGuidance::capture_track_handoff_velocity()
@@ -1667,6 +2099,7 @@ void DytGuidance::enter_state(TaskState new_state, uint8_t lost_reason)
 	_state_enter_time = hrt_absolute_time();
 
 	if (new_state == TaskState::SearchWaitLock) {
+		reset_attitude_diagnostic();
 		_lock_streak = 0;
 		_relock_streak = 0;
 		_last_hint_lock_time = 0;
@@ -2655,6 +3088,11 @@ void DytGuidance::Run()
 	update_subscriptions();
 
 	const hrt_abstime now = hrt_absolute_time();
+
+	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
+		_gcs_phase_request = 0;
+	}
+
 	const bool activation_request = activation_requested();
 	const bool midcourse_pointing_request = midcourse_pointing_requested();
 	const bool auto_activation_enabled = _param_auto_enable.get() > 0;
@@ -2695,7 +3133,8 @@ void DytGuidance::Run()
 	if (_state != TaskState::Idle && _state != TaskState::Abort) {
 		if (!preconditions_ok()) {
 			abort_guidance(dyt_guidance_status_s::LOST_REASON_PRECONDITION);
-		} else if ((now - _state_enter_time) > MANUAL_TAKEOVER_GRACE && manual_takeover_detected()) {
+		} else if (now >= _state_enter_time && (now - _state_enter_time) > MANUAL_TAKEOVER_GRACE &&
+			   manual_takeover_detected()) {
 			abort_guidance(dyt_guidance_status_s::LOST_REASON_MANUAL);
 		}
 	}
@@ -2712,6 +3151,7 @@ void DytGuidance::Run()
 			publish_hold_setpoint();
 		}
 
+		update_ground_command_result(now);
 		publish_status();
 		return;
 	}
@@ -2748,7 +3188,8 @@ void DytGuidance::Run()
 				update_midcourse_pointing(now);
 			}
 
-			if ((now - _state_enter_time) > static_cast<hrt_abstime>(_param_wait_ms.get()) * 1000ULL) {
+			if (now >= _state_enter_time &&
+			    (now - _state_enter_time) > static_cast<hrt_abstime>(_param_wait_ms.get()) * 1000ULL) {
 				enter_lost_hold(dyt_guidance_status_s::LOST_REASON_TIMEOUT);
 			}
 		}
@@ -2852,6 +3293,7 @@ void DytGuidance::Run()
 		publish_track_setpoint(intercept_profile());
 	}
 
+	update_ground_command_result(now);
 	publish_status();
 }
 

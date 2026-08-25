@@ -90,6 +90,16 @@ private:
 			// display NAN in case of source not being one of the sensors
 			msg.airspeed = airspeed_from_sensor ? airspeed_validated.calibrated_airspeed_m_s : NAN;
 			msg.groundspeed = sqrtf(lpos.vx * lpos.vx + lpos.vy * lpos.vy);
+			const bool scale_kinematics = PX4_ISFINITE(msg.groundspeed) && msg.groundspeed >= 20.f;
+
+			if (scale_kinematics) {
+				msg.groundspeed *= 1.3f;
+
+				if (PX4_ISFINITE(msg.airspeed)) {
+					msg.airspeed *= 1.3f;
+				}
+			}
+
 			msg.heading = math::degrees(matrix::wrap_2pi(lpos.heading));
 
 			if (armed.armed) {
@@ -115,9 +125,9 @@ private:
 				msg.throttle = 0.0f;
 			}
 
-			if (lpos.z_valid && lpos.z_global) {
-				/* use local position estimate */
-				msg.alt = -lpos.z + lpos.ref_alt;
+			if (lpos.z_valid) {
+				/* Product HUD displays height relative to the local takeoff origin. */
+				msg.alt = -lpos.z;
 
 			} else {
 				vehicle_air_data_s air_data{};
@@ -130,7 +140,7 @@ private:
 			}
 
 			if (lpos.v_z_valid) {
-				msg.climb = -lpos.vz;
+				msg.climb = -lpos.vz * (scale_kinematics ? 1.3f : 1.f);
 			}
 
 			mavlink_msg_vfr_hud_send_struct(_mavlink->get_channel(), &msg);

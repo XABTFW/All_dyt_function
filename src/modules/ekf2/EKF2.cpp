@@ -1626,7 +1626,7 @@ void EKF2::PublishLocalPosition(const hrt_abstime &timestamp)
 
 	lpos.dist_bottom_sensor_bitfield = vehicle_local_position_s::DIST_BOTTOM_SENSOR_NONE;
 
-	if (_ekf.control_status_flags().rng_terrain) {
+	if (_ekf.control_status_flags().rng_terrain || _ekf.control_status_flags().rng_hgt) {
 		lpos.dist_bottom_sensor_bitfield |= vehicle_local_position_s::DIST_BOTTOM_SENSOR_RANGE;
 	}
 

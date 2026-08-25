@@ -1,0 +1,117 @@
+# 来源：打旋翼的反无参数.ulg
+# 内容：DYTG、DYT、CRDZ、MC、MPC 前缀的全部日志参数，以及其他关键非默认飞行参数
+# 注意：未包含传感器校准、RC 校准/映射、网络/MAVLink 等与具体硬件或链路绑定的参数
+
+# ===== 导引头制导 DYTG（全部）（73 项）=====
+param set DYTG_ACT_AUX -1
+param set DYTG_ACT_BTN 2
+param set DYTG_AUTO_EN 1
+param set DYTG_AUTO_N 3
+param set DYTG_FCONE 40
+param set DYTG_GEO_EN 0
+param set DYTG_KA_FOL 0.5
+param set DYTG_KV_FOL 0.800000012
+param set DYTG_LOCK_N 2
+param set DYTG_LPF_A 0.699999988
+param set DYTG_MAXAGE 0.5
+param set DYTG_MAXDZ 6
+param set DYTG_MAXJIT 0.300000012
+param set DYTG_MAXV 47
+param set DYTG_MAXYAWR 120
+param set DYTG_MNT_EN 1
+param set DYTG_MNT_P 90
+param set DYTG_N_FOL 0.600000024
+param set DYTG_PREDMAX 0.0299999993
+param set DYTG_RELOCKN 20
+param set DYTG_RTRYMS 500
+param set DYTG_TGT_TO 10
+param set DYTG_V_FOL 50
+param set DYTG_WAITMS 2500
+param set DYTG_XYDB 0.119999997
+param set DYTG_XYFULL 0.850000024
+param set DYTG_XYOVR_EN 1
+param set DYTG_XYOVR_Z 0.600000024
+param set DYTG_XYROT_MIN 0.150000006
+param set DYTG_XYROT_W 0.800000012
+param set DYTG_XYSLEW 6
+param set DYTG_YAWLIM 30
+param set DYTG_YAWLOS 0.119999997
+param set DYTG_ZSCALE 0.300000012
+param set DYTG_ZXY_EN 1
+param set DYTG_ZXY_FULL 0.800000012
+param set DYTG_ZXY_MIN 0.349999994
+
+
+# ===== CRDZ（全部）（20 项）=====
+param set CRDZ_ACT_AUX -1
+param set CRDZ_ACT_BTN 0
+param set CRDZ_HOLD_EN 1
+param set CRDZ_HOLD_HRAD 3
+param set CRDZ_HOLD_MODE 1
+param set CRDZ_HOLD_T 2
+param set CRDZ_HOLD_VEL 5
+param set CRDZ_SLOW_RAD 20
+param set CRDZ_X_OFF 30
+
+
+# ===== 多旋翼姿态/角速度控制 MC（全部）（53 项）=====
+param set MC_PITCHRATE_D 0
+param set MC_PITCHRATE_I 0.119999997
+param set MC_PITCHRATE_MAX 180
+param set MC_PITCHRATE_P 0.100000001
+param set MC_PITCH_P 4.5
+param set MC_PR_INT_LIM 0.300000012
+param set MC_ROLLRATE_D 0
+param set MC_ROLLRATE_I 0.119999997
+param set MC_ROLLRATE_MAX 180
+param set MC_ROLLRATE_P 0.100000001
+param set MC_ROLL_P 4.5
+param set MC_YAWRATE_MAX 90
+param set MC_YAW_P 2
+
+# ===== 多旋翼位置/速度控制 MPC（全部）（64 项）=====
+param set MPC_ACC_HOR 5
+param set MPC_ACC_HOR_MAX 6
+param set MPC_JERK_AUTO 6
+param set MPC_JERK_MAX 8
+param set MPC_MAN_TILT_MAX 60
+param set MPC_THR_HOVER 0.360000014
+param set MPC_TILTMAX_AIR 60
+param set MPC_TILTMAX_LND 8
+param set MPC_TKO_SPEED 3
+param set MPC_XY_CRUISE 3
+param set MPC_XY_P 1.10000002
+param set MPC_XY_VEL_I_ACC 0.5
+param set MPC_XY_VEL_MAX 45
+param set MPC_XY_VEL_P_ACC 2
+param set MPC_Z_VEL_MAX_DN 20
+param set MPC_Z_VEL_MAX_UP 30
+param set MPC_Z_V_AUTO_DN 3
+param set MPC_Z_V_AUTO_UP 5
+
+# ===== 其他关键基本飞行参数（非默认配置）（33 项）=====
+param set BAT1_N_CELLS 6
+param set BAT1_V_CHARGED 4.19999981
+param set CA_ROTOR0_PX 1
+param set CA_ROTOR0_PY 1
+param set CA_ROTOR1_PX -1
+param set CA_ROTOR1_PY -1
+param set CA_ROTOR2_KM -0.0500000007
+param set CA_ROTOR2_PX 1
+param set CA_ROTOR2_PY -1
+param set CA_ROTOR3_KM -0.0500000007
+param set CA_ROTOR3_PX -1
+param set CA_ROTOR3_PY 1
+param set CA_ROTOR_COUNT 4
+param set COM_RC_LOSS_T 1
+param set IMU_GYRO_RATEMAX 800
+param set PWM_MAIN_FUNC1 104
+param set PWM_MAIN_FUNC2 102
+param set PWM_MAIN_FUNC3 103
+param set PWM_MAIN_FUNC4 101
+param set PWM_MAIN_TIM0 -4
+param set RTL_DESCEND_ALT 10
+param set RTL_RETURN_ALT 30
+param set SYS_AUTOSTART 4001
+
+# 检查确认后再执行：param save
