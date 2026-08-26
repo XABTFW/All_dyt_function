@@ -168,6 +168,30 @@ bool CooperativeRendezvous::offboard_preparation_allowed(const vehicle_status_s 
 	       || status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
 }
 
+bool CooperativeRendezvous::target_data_fresh() const
+{
+	const hrt_abstime now = hrt_absolute_time();
+
+	if (_param_gcs_enable.get() > 0 && _gcs_target_active && _last_gcs_setpoint_time != 0
+	    && _last_gcs_setpoint_time <= now) {
+		const float timeout_param = _param_gcs_timeout.get();
+		const float timeout_s = PX4_ISFINITE(timeout_param) ? math::constrain(timeout_param, 0.1f, 5.f) : 0.6f;
+
+		if (now - _last_gcs_setpoint_time <= static_cast<hrt_abstime>(timeout_s * 1_s)) {
+			return true;
+		}
+	}
+
+	if (!_map_ref_initialized || _last_target_time == 0 || _last_target_time > now
+	    || !PX4_ISFINITE(_target_info.lat) || !PX4_ISFINITE(_target_info.lon) || !PX4_ISFINITE(_target_info.alt)) {
+		return false;
+	}
+
+	const float timeout_param = _param_target_timeout.get();
+	const float timeout_s = PX4_ISFINITE(timeout_param) ? math::constrain(timeout_param, 0.1f, 30.f) : 2.f;
+	return now - _last_target_time <= static_cast<hrt_abstime>(timeout_s * 1_s);
+}
+
 void CooperativeRendezvous::publish_status(const vehicle_status_s &status, bool local_position_is_valid,
 		bool controlling_vehicle)
 {
@@ -834,6 +858,7 @@ bool CooperativeRendezvous::geofence_avoidance_required(const vehicle_status_s &
 
 		_geofence_rtl_active = true;
 		_geofence_resume_pending = false;
+		_geofence_clear_time = 0;
 	}
 
 	if (_geofence_rtl_active) {
@@ -845,7 +870,8 @@ bool CooperativeRendezvous::geofence_avoidance_required(const vehicle_status_s &
 
 		_geofence_rtl_active = false;
 		_geofence_resume_pending = true;
-		PX4_INFO("cooperative rendezvous: geofence clear, resuming guidance");
+		_geofence_clear_time = now;
+		PX4_INFO("cooperative rendezvous: geofence clear, preparing guidance resume");
 	}
 
 	return false;
@@ -1027,6 +1053,7 @@ void CooperativeRendezvous::run_rendezvous(const vehicle_local_position_s &local
 		if (status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD && status.timestamp != 0 &&
 		    hrt_elapsed_time(&status.timestamp) < 1_s) {
 			_geofence_resume_pending = false;
+			_geofence_clear_time = 0;
 		}
 
 	} else if (status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION &&
@@ -1141,6 +1168,7 @@ void CooperativeRendezvous::Run()
 		if (!rendezvous_switch_enabled()) {
 			_geofence_rtl_active = false;
 			_geofence_resume_pending = false;
+			_geofence_clear_time = 0;
 			reset_velocity_slew();
 			reset_target_filter();
 			reset_target_history();
@@ -1161,7 +1189,22 @@ void CooperativeRendezvous::Run()
 		if (!offboard_control_active(status)) {
 			// Pre-stream only the Offboard heartbeat while changing modes. Publishing a
 			// trajectory here would race the active FlightTask on the shared uORB topic.
-			if (offboard_preparation_allowed(status)) {
+			if (_geofence_resume_pending) {
+				// A geofence clear and the Commander failsafe state are not published in the
+				// same cycle. Keep the heartbeat alive while Commander releases RTL, but do
+				// not request Offboard until the failsafe is clear and a target is fresh.
+				if (vehicle_status_fresh(status)
+				    && status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) {
+					publish_offboard_heartbeat(true, false);
+					const hrt_abstime now = hrt_absolute_time();
+
+					if (!status.failsafe && target_data_fresh() && _geofence_clear_time != 0
+					    && _geofence_clear_time <= now && now - _geofence_clear_time >= 1_s) {
+						request_offboard(status);
+					}
+				}
+
+			} else if (offboard_preparation_allowed(status)) {
 				publish_offboard_heartbeat(true, false);
 				request_arm(status);
 				request_offboard(status);
@@ -1177,6 +1220,7 @@ void CooperativeRendezvous::Run()
 		// Offboard is now the confirmed trajectory owner. Clearing this latch here
 		// also covers the GCS-target branch in run_rendezvous().
 		_geofence_resume_pending = false;
+		_geofence_clear_time = 0;
 
 		run_rendezvous(local_pos, status);
 		publish_status(status, true, true);

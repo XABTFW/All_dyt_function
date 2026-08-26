@@ -45,8 +45,9 @@ class FastTouchdownDetector
 {
 public:
 	bool update(hrt_abstime now, bool enabled, bool armed, bool landing_allowed,
-		    bool touchdown_allowed, float height_above_home,
-		    float maximum_height_above_home, const distance_sensor_s *sample,
+		    bool touchdown_allowed, bool tof_touchdown_allowed, float height_above_home,
+		    float maximum_height_above_home, float maximum_height_below_home,
+		    const distance_sensor_s *sample,
 		    float trigger_distance, float operational_max_distance,
 		    hrt_abstime trigger_time);
 
@@ -58,11 +59,11 @@ private:
 	static constexpr hrt_abstime SAMPLE_TIMEOUT = 250_ms;
 	static constexpr hrt_abstime MAX_SAMPLE_GAP = 250_ms;
 	static constexpr uint8_t MIN_SAMPLE_COUNT = 3;
+	static constexpr uint8_t MIN_APPROACH_SAMPLE_COUNT = 3;
+	static constexpr float EKF_INDEPENDENT_APPROACH_DISTANCE = 2.f;
 	static constexpr float MAX_DISTANCE_DROP_RATE = 5.f;
 	static constexpr float DISTANCE_JUMP_MARGIN = 0.10f;
 	static constexpr float MAX_DISTANCE_DROP = 1.20f;
-	static constexpr float HEIGHT_BELOW_HOME_TOLERANCE = 0.5f;
-
 	bool validSample(const distance_sensor_s &sample, hrt_abstime now,
 			 float operational_max_distance) const;
 	void resetCandidate();
@@ -75,6 +76,7 @@ private:
 	float _last_sample_distance{0.f};
 	float _trigger_distance{0.f};
 	uint8_t _sample_count{0};
+	uint8_t _approach_sample_count{0};
 	bool _triggered{false};
 };
 

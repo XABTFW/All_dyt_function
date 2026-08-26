@@ -85,7 +85,7 @@ protected:
 private:
 	bool _is_close_to_ground();
 	bool _fast_touchdown_landing_active() const;
-	bool _fast_touchdown_allowed(hrt_abstime now) const;
+	bool _fast_touchdown_allowed(hrt_abstime now, bool require_ekf_ground_distance) const;
 	float _height_above_home() const;
 	void _update_fast_touchdown(hrt_abstime now);
 
@@ -158,6 +158,7 @@ private:
 		(ParamBool<px4::params::LNDMC_TD_EN>)       _param_lndmc_td_enable,
 		(ParamFloat<px4::params::LNDMC_TD_DIST>)    _param_lndmc_td_distance,
 		(ParamFloat<px4::params::LNDMC_TD_ALT>)     _param_lndmc_td_altitude,
+		(ParamFloat<px4::params::LNDMC_TD_BELOW>)   _param_lndmc_td_below_home,
 		(ParamFloat<px4::params::LNDMC_TD_MAX>)     _param_lndmc_td_max_distance,
 		(ParamFloat<px4::params::LNDMC_TD_TIME>)    _param_lndmc_td_time
 	);

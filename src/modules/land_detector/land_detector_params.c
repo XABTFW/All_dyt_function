@@ -58,3 +58,20 @@ PARAM_DEFINE_INT32(LND_FLIGHT_T_HI, 0);
  *
  */
 PARAM_DEFINE_INT32(LND_FLIGHT_T_LO, 0);
+
+/**
+ * ToF fast touchdown height below Home tolerance
+ *
+ * Maximum local height below Home at which fast touchdown may use range data.
+ * Increase this when automatic Home altitude correction can move Home above the
+ * actual landing surface. The automatic LAND setpoint, descent, fresh range and
+ * multi-sample checks remain required.
+ *
+ * @unit m
+ * @min 0.00
+ * @max 10.00
+ * @decimal 1
+ * @increment 0.5
+ * @group Land Detector
+ */
+PARAM_DEFINE_FLOAT(LNDMC_TD_BELOW, 0.5f);

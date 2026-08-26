@@ -41,8 +41,10 @@ namespace land_detector
 bool FastTouchdownDetector::update(hrt_abstime now, bool enabled, bool armed,
 				   bool landing_allowed,
 				   bool touchdown_allowed,
+				   bool tof_touchdown_allowed,
 				   float height_above_home,
 				   float maximum_height_above_home,
+				   float maximum_height_below_home,
 				   const distance_sensor_s *sample,
 				   float trigger_distance,
 				   float operational_max_distance,
@@ -51,7 +53,8 @@ bool FastTouchdownDetector::update(hrt_abstime now, bool enabled, bool armed,
 	if (!enabled || !armed || !PX4_ISFINITE(trigger_distance) || trigger_distance <= 0.f
 	    || !PX4_ISFINITE(operational_max_distance)
 	    || operational_max_distance <= trigger_distance
-	    || !PX4_ISFINITE(maximum_height_above_home) || maximum_height_above_home <= 0.f) {
+	    || !PX4_ISFINITE(maximum_height_above_home) || maximum_height_above_home <= 0.f
+	    || !PX4_ISFINITE(maximum_height_below_home) || maximum_height_below_home < 0.f) {
 		reset();
 		return false;
 	}
@@ -62,7 +65,7 @@ bool FastTouchdownDetector::update(hrt_abstime now, bool enabled, bool armed,
 	}
 
 	const bool independent_altitude_gate = PX4_ISFINITE(height_above_home)
-					       && height_above_home >= -HEIGHT_BELOW_HOME_TOLERANCE
+					       && height_above_home >= -maximum_height_below_home
 					       && height_above_home <= maximum_height_above_home;
 
 	if (!landing_allowed || !independent_altitude_gate) {
@@ -109,10 +112,22 @@ bool FastTouchdownDetector::update(hrt_abstime now, bool enabled, bool armed,
 
 	if (sample->current_distance > trigger_distance) {
 		resetCandidate();
+
+		if (sample->current_distance <= EKF_INDEPENDENT_APPROACH_DISTANCE) {
+			if (_approach_sample_count < MIN_APPROACH_SAMPLE_COUNT) {
+				++_approach_sample_count;
+			}
+
+		} else {
+			_approach_sample_count = 0;
+		}
+
 		return false;
 	}
 
-	if (!touchdown_allowed) {
+	const bool tof_approach_confirmed = _approach_sample_count >= MIN_APPROACH_SAMPLE_COUNT;
+
+	if (!touchdown_allowed && !(tof_touchdown_allowed && tof_approach_confirmed)) {
 		resetCandidate();
 		return false;
 	}
@@ -161,6 +176,7 @@ void FastTouchdownDetector::resetSampleHistory()
 	resetCandidate();
 	_last_sample_time = 0;
 	_last_sample_distance = 0.f;
+	_approach_sample_count = 0;
 }
 
 void FastTouchdownDetector::reset()

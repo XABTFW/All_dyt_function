@@ -3810,16 +3810,18 @@ void MavlinkReceiver::handle_message_dyt_track_point_command(mavlink_message_t *
 				       mavlink_command.image_width_px > 0 &&
 				       mavlink_command.image_height_px > 0 &&
 				       mavlink_command.x_px < mavlink_command.image_width_px &&
-				       mavlink_command.y_px < mavlink_command.image_height_px &&
-				       mavlink_command.x_px <= INT16_MAX &&
-				       mavlink_command.y_px <= INT16_MAX;
+				       mavlink_command.y_px < mavlink_command.image_height_px;
 
 	if (valid_coordinates) {
+		const int32_t centered_x_px = static_cast<int32_t>(mavlink_command.x_px) -
+					      static_cast<int32_t>(mavlink_command.image_width_px) / 2;
+		const int32_t centered_y_px = static_cast<int32_t>(mavlink_command.y_px) -
+					      static_cast<int32_t>(mavlink_command.image_height_px) / 2;
 		dyt_command_s command{};
 		command.timestamp = hrt_absolute_time();
 		command.command = dyt_command_s::CMD_TRACK_POINT;
-		command.param_x = static_cast<int16_t>(mavlink_command.x_px);
-		command.param_y = static_cast<int16_t>(mavlink_command.y_px);
+		command.param_x = static_cast<int16_t>(centered_x_px);
+		command.param_y = static_cast<int16_t>(centered_y_px);
 		result = _dyt_command_pub.publish(command) ? MAV_RESULT_ACCEPTED : MAV_RESULT_FAILED;
 	}
 

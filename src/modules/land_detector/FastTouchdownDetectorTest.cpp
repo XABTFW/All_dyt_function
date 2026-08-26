@@ -59,10 +59,11 @@ protected:
 	bool update(const distance_sensor_s *sample, hrt_abstime now,
 		    bool enabled = true, bool armed = true,
 		    bool landing_allowed = true, bool touchdown_allowed = true,
-		    float height_above_home = 1.f, float maximum_height_above_home = 5.f)
+		    float height_above_home = 1.f, float maximum_height_above_home = 5.f,
+		    bool tof_touchdown_allowed = true)
 	{
-		return _detector.update(now, enabled, armed, landing_allowed, touchdown_allowed,
-					height_above_home, maximum_height_above_home,
+		return _detector.update(now, enabled, armed, landing_allowed, touchdown_allowed, tof_touchdown_allowed,
+					height_above_home, maximum_height_above_home, 0.5f,
 					sample, 0.28f, 5.f, 40_ms);
 	}
 
@@ -127,11 +128,13 @@ TEST_F(FastTouchdownDetectorTest, RejectsInvalidSensorData)
 TEST_F(FastTouchdownDetectorTest, RejectsInvalidTriggerDistance)
 {
 	auto reading = sample(1_s);
-	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, 1.f, 5.f, &reading, NAN, 5.f, 40_ms));
-	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, 1.f, 5.f, &reading, 0.f, 5.f, 40_ms));
-	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, 1.f, 5.f, &reading, 0.28f, 0.28f,
+	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, true, 1.f, 5.f, 0.5f, &reading, NAN, 5.f,
 				      40_ms));
-	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, 1.f, NAN, &reading, 0.28f, 5.f,
+	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, true, 1.f, 5.f, 0.5f, &reading, 0.f, 5.f,
+				      40_ms));
+	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, true, 1.f, 5.f, 0.5f, &reading, 0.28f, 0.28f,
+				      40_ms));
+	EXPECT_FALSE(_detector.update(reading.timestamp, true, true, true, true, true, 1.f, NAN, 0.5f, &reading, 0.28f, 5.f,
 				      40_ms));
 }
 
@@ -186,6 +189,54 @@ TEST_F(FastTouchdownDetectorTest, LowAtLandingEntryTriggersAfterConfirmation)
 	EXPECT_FALSE(update(&first, first.timestamp));
 	EXPECT_FALSE(update(&second, second.timestamp));
 	EXPECT_TRUE(update(&third, third.timestamp));
+}
+
+TEST_F(FastTouchdownDetectorTest, ConfirmedTwoMetreApproachDoesNotRequireEkfGroundDistance)
+{
+	auto approach_first = sample(900_ms, 1.0f);
+	auto approach_second = sample(920_ms, 0.8f);
+	auto approach_third = sample(940_ms, 0.6f);
+	auto approach_fourth = sample(960_ms, 0.45f);
+	auto approach_fifth = sample(980_ms, 0.3f);
+	auto approach_sixth = sample(1_s, 0.29f);
+	auto first = sample(1040_ms, 0.04f);
+	auto second = sample(1060_ms, 0.04f);
+	auto third = sample(1080_ms, 0.04f);
+
+	EXPECT_FALSE(update(&approach_first, approach_first.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&approach_second, approach_second.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&approach_third, approach_third.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&approach_fourth, approach_fourth.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&approach_fifth, approach_fifth.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&approach_sixth, approach_sixth.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&first, first.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&second, second.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_TRUE(update(&third, third.timestamp, true, true, true, false, 1.f, 5.f, true));
+}
+
+TEST_F(FastTouchdownDetectorTest, SuddenLowReadingDoesNotBypassEkfGroundDistance)
+{
+	auto first = sample(1_s, 0.04f);
+	auto second = sample(1020_ms, 0.04f);
+	auto third = sample(1040_ms, 0.04f);
+
+	EXPECT_FALSE(update(&first, first.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&second, second.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(update(&third, third.timestamp, true, true, true, false, 1.f, 5.f, true));
+	EXPECT_FALSE(_detector.triggered());
+}
+
+TEST_F(FastTouchdownDetectorTest, ConfirmedApproachStillRequiresNonEkfSafetyGates)
+{
+	const hrt_abstime approach_end = feedApproach();
+	auto first = sample(approach_end + 20_ms);
+	auto second = sample(approach_end + 40_ms);
+	auto third = sample(approach_end + 60_ms);
+
+	EXPECT_FALSE(update(&first, first.timestamp, true, true, true, false, 1.f, 5.f, false));
+	EXPECT_FALSE(update(&second, second.timestamp, true, true, true, false, 1.f, 5.f, false));
+	EXPECT_FALSE(update(&third, third.timestamp, true, true, true, false, 1.f, 5.f, false));
+	EXPECT_FALSE(_detector.triggered());
 }
 
 TEST_F(FastTouchdownDetectorTest, RejectsOutsideOperationalRangeAndLargeDistanceJump)
@@ -256,20 +307,19 @@ TEST_F(FastTouchdownDetectorTest, AcceptsDropBelowAbsoluteLimit)
 	EXPECT_TRUE(update(&third, third.timestamp));
 }
 
-TEST_F(FastTouchdownDetectorTest, TouchdownGateMustPass)
+TEST_F(FastTouchdownDetectorTest, EkfTouchdownGateRequiredWithoutConfirmedApproach)
 {
-	const hrt_abstime approach_end = feedApproach();
-	auto first = sample(approach_end + 20_ms);
-	auto second = sample(approach_end + 40_ms);
-	auto third = sample(approach_end + 60_ms);
+	auto first = sample(1_s, 0.04f);
+	auto second = sample(1020_ms, 0.04f);
+	auto third = sample(1040_ms, 0.04f);
 
 	EXPECT_FALSE(update(&first, first.timestamp, true, true, true, false));
 	EXPECT_FALSE(update(&second, second.timestamp, true, true, true, false));
 	EXPECT_FALSE(update(&third, third.timestamp, true, true, true, false));
 
-	auto fourth = sample(approach_end + 80_ms);
-	auto fifth = sample(approach_end + 100_ms);
-	auto sixth = sample(approach_end + 120_ms);
+	auto fourth = sample(1060_ms, 0.04f);
+	auto fifth = sample(1080_ms, 0.04f);
+	auto sixth = sample(1100_ms, 0.04f);
 	EXPECT_FALSE(update(&fourth, fourth.timestamp));
 	EXPECT_FALSE(update(&fifth, fifth.timestamp));
 	EXPECT_TRUE(update(&sixth, sixth.timestamp));
@@ -305,4 +355,18 @@ TEST_F(FastTouchdownDetectorTest, IndependentAltitudeGateFailsClosed)
 	EXPECT_FALSE(update(&second, second.timestamp, true, true, true, true, -0.6f));
 	EXPECT_FALSE(update(&third, third.timestamp, true, true, true, true, 1.f, 0.f));
 	EXPECT_FALSE(_detector.triggered());
+}
+
+TEST_F(FastTouchdownDetectorTest, ConfigurableBelowHomeTolerance)
+{
+	auto first = sample(1_s, 0.04f);
+	auto second = sample(1020_ms, 0.04f);
+	auto third = sample(1040_ms, 0.04f);
+
+	EXPECT_FALSE(_detector.update(first.timestamp, true, true, true, true, true, -5.3f, 5.f, 6.f,
+				      &first, 0.28f, 5.f, 40_ms));
+	EXPECT_FALSE(_detector.update(second.timestamp, true, true, true, true, true, -5.3f, 5.f, 6.f,
+				      &second, 0.28f, 5.f, 40_ms));
+	EXPECT_TRUE(_detector.update(third.timestamp, true, true, true, true, true, -5.3f, 5.f, 6.f,
+				     &third, 0.28f, 5.f, 40_ms));
 }

@@ -73,6 +73,7 @@ private:
 	bool protected_navigation_state(uint8_t nav_state) const;
 	bool offboard_control_active(const vehicle_status_s &status) const;
 	bool offboard_preparation_allowed(const vehicle_status_s &status) const;
+	bool target_data_fresh() const;
 	void publish_status(const vehicle_status_s &status, bool local_position_is_valid, bool controlling_vehicle);
 	bool local_position_valid(const vehicle_local_position_s &local_pos) const;
 	bool update_map_projection(const vehicle_local_position_s &local_pos);
@@ -134,6 +135,7 @@ private:
 	bool _arrival_follow_active{false};
 	bool _geofence_rtl_active{false};
 	bool _geofence_resume_pending{false};
+	hrt_abstime _geofence_clear_time{0};
 	bool _trajectory_publication_allowed{false};
 	bool _gcs_midcourse_engaged{false};
 	hrt_abstime _arrival_hold_candidate_since{0};

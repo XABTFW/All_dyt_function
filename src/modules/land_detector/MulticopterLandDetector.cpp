@@ -138,7 +138,7 @@ bool MulticopterLandDetector::_fast_touchdown_landing_active() const
 	       && auto_landing_intended && land_setpoint;
 }
 
-bool MulticopterLandDetector::_fast_touchdown_allowed(hrt_abstime now) const
+bool MulticopterLandDetector::_fast_touchdown_allowed(hrt_abstime now, bool require_ekf_ground_distance) const
 {
 	const bool local_position_fresh = _vehicle_local_position.timestamp > 0
 					  && _vehicle_local_position.timestamp <= now
@@ -151,10 +151,10 @@ bool MulticopterLandDetector::_fast_touchdown_allowed(hrt_abstime now) const
 					   && _vehicle_local_position.dist_bottom >= 0.f
 					   && _vehicle_local_position.dist_bottom < 0.5f;
 	const bool descending = local_position_fresh && _vehicle_local_position.v_z_valid
-				&& PX4_ISFINITE(_vehicle_local_position.vz) && _vehicle_local_position.vz > 0.05f;
+				&& PX4_ISFINITE(_vehicle_local_position.vz) && _vehicle_local_position.vz > 0.01f;
 
-	return _fast_touchdown_landing_active() && range_fused && estimator_near_ground
-	       && descending;
+	return _fast_touchdown_landing_active() && range_fused && descending
+	       && (!require_ekf_ground_distance || estimator_near_ground);
 }
 
 float MulticopterLandDetector::_height_above_home() const
@@ -187,7 +187,9 @@ void MulticopterLandDetector::_update_fast_touchdown(hrt_abstime now)
 	const bool was_triggered = _fast_touchdown_detector.triggered();
 	const float height_above_home = _height_above_home();
 	_fast_touchdown_detector.update(now, _param_lndmc_td_enable.get(), _armed, _fast_touchdown_landing_active(),
-					_fast_touchdown_allowed(now), height_above_home, _param_lndmc_td_altitude.get(),
+					_fast_touchdown_allowed(now, true), _fast_touchdown_allowed(now, false),
+					height_above_home, _param_lndmc_td_altitude.get(),
+					_param_lndmc_td_below_home.get(),
 					sample_updated ? &newest_downward_laser : nullptr,
 					_param_lndmc_td_distance.get(), _param_lndmc_td_max_distance.get(),
 					_param_lndmc_td_time.get() * 1_s);
