@@ -369,13 +369,15 @@ PARAM_DEFINE_INT32(CRDZ_MINH_EN, 1);
 /**
  * Minimum target-link height
  *
- * Minimum height above the local reference for target-aircraft rendezvous
- * setpoints. This limit is only applied to setpoints derived from the other
+ * Minimum height offset from the local takeoff reference for target-aircraft
+ * rendezvous setpoints. Positive values set the minimum above the takeoff
+ * reference, negative values set it below the takeoff reference, and 0 disables
+ * the limit. This limit is only applied to setpoints derived from the other
  * aircraft position; ground-station trajectory setpoints are not constrained
- * by this parameter. Set to 0 to disable.
+ * by this parameter.
  *
  * @unit m
- * @min 0
+ * @min -100
  * @max 100
  * @decimal 1
  * @group Cooperative Rendezvous

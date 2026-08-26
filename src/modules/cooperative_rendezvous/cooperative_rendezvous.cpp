@@ -335,11 +335,11 @@ void CooperativeRendezvous::enforce_target_minimum_height(matrix::Vector3f &targ
 
 	const float minimum_height = _param_minimum_height.get();
 
-	if (!PX4_ISFINITE(minimum_height) || minimum_height <= 0.f || !PX4_ISFINITE(target_position(2))) {
+	if (!PX4_ISFINITE(minimum_height) || fabsf(minimum_height) < 0.0001f || !PX4_ISFINITE(target_position(2))) {
 		return;
 	}
 
-	const float highest_allowed_down = -math::constrain(minimum_height, 0.f, 100.f);
+	const float highest_allowed_down = -math::constrain(minimum_height, -100.f, 100.f);
 
 	if (target_position(2) > highest_allowed_down) {
 		target_position(2) = highest_allowed_down;

@@ -2,4 +2,4 @@ menuconfig MODULES_COMM_EMERGENCY
 	bool "comm_emergency"
 	default n
 	---help---
-		Communication-loss hold, battery, timeout and mission recovery policy.
+		Communication-loss hold, battery, timeout and distance-gated mission/offboard recovery policy.
