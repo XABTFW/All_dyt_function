@@ -1027,7 +1027,8 @@ Commander::handle_command(const vehicle_command_s &cmd)
 
 					if (PX4_ISFINITE(lat) && PX4_ISFINITE(lon) && PX4_ISFINITE(alt)) {
 
-						if (_home_position.setManually(lat, lon, alt, roll, pitch, yaw)) {
+						if (_home_position.setManually(lat, lon, alt, roll, pitch, yaw,
+									       _param_com_home_alt_delta.get())) {
 
 							cmd_result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED;
 

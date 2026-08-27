@@ -45,6 +45,8 @@
 #include <lib/mathlib/math/filter/AlphaFilter.hpp>
 #include <px4_platform_common/module_params.h>
 
+#include "HomePositionAltitudeGuard.hpp"
+
 using namespace time_literals;
 
 static constexpr int kHomePositionGPSRequiredFixType = 2;
@@ -65,7 +67,8 @@ public:
 
 	bool setHomePosition(bool force = false);
 	void setInAirHomePosition();
-	bool setManually(double lat, double lon, float alt, float roll, float pitch, float yaw);
+	bool setManually(double lat, double lon, float alt, float roll, float pitch, float yaw,
+			 float maximum_altitude_delta);
 	void setTakeoffTime(uint64_t takeoff_time) { _takeoff_time = takeoff_time; }
 
 	void update(bool set_automatically, bool check_if_changed);

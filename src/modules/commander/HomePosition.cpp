@@ -253,7 +253,8 @@ void HomePosition::setInAirHomePosition()
 	}
 }
 
-bool HomePosition::setManually(double lat, double lon, float alt, float roll, float pitch, float yaw)
+bool HomePosition::setManually(double lat, double lon, float alt, float roll, float pitch, float yaw,
+		float maximum_altitude_delta)
 {
 	const vehicle_local_position_s &vehicle_local_position = _local_position_sub.get();
 
@@ -262,18 +263,27 @@ bool HomePosition::setManually(double lat, double lon, float alt, float roll, fl
 	}
 
 	home_position_s &home = _home_position_pub.get();
+	bool altitude_limited = false;
+	const float selected_altitude = home_position_utils::selectManualAltitude(alt, home, maximum_altitude_delta,
+				altitude_limited);
+
+	if (altitude_limited) {
+		PX4_WARN("manual Home altitude %.1f m rejected, keeping %.1f m",
+			 (double)alt, (double)selected_altitude);
+	}
+
 	home.manual_home = true;
 
 	home.lat = lat;
 	home.lon = lon;
 	home.valid_hpos = true;
-	home.alt = alt;
+	home.alt = selected_altitude;
 	home.valid_alt = true;
 
 	// update local projection reference including altitude
 	MapProjection ref_pos{vehicle_local_position.ref_lat, vehicle_local_position.ref_lon};
 	ref_pos.project(lat, lon, home.x, home.y);
-	home.z = -(alt - vehicle_local_position.ref_alt);
+	home.z = -(selected_altitude - vehicle_local_position.ref_alt);
 	home.valid_lpos = vehicle_local_position.xy_valid && vehicle_local_position.z_valid;
 
 	home.roll = roll;
@@ -350,7 +360,8 @@ void HomePosition::update(bool set_automatically, bool check_if_changed)
 
 		_gps_position_for_home_valid = time_valid && fix_valid && eph_valid && epv_valid && evh_valid;
 
-		if (_param_com_home_en.get() && _gps_position_for_home_valid && _last_gps_timestamp != 0 && _last_baro_timestamp != 0
+		if (_param_com_home_en.get() && !_home_position_pub.get().manual_home
+		    && _gps_position_for_home_valid && _last_gps_timestamp != 0 && _last_baro_timestamp != 0
 		    && _takeoff_time != 0 && now < _takeoff_time + kHomePositionCorrectionTimeWindow) {
 
 			const float gps_alt = static_cast<float>(_gps_alt);

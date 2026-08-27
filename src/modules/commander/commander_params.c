@@ -154,6 +154,25 @@ PARAM_DEFINE_FLOAT(COM_RC_LOSS_T, 0.5f);
 PARAM_DEFINE_INT32(COM_HOME_EN, 1);
 
 /**
+ * Maximum manual Home altitude change
+ *
+ * Maximum allowed difference between the altitude in a MAV_CMD_DO_SET_HOME
+ * specified-position command and an existing valid Home altitude. If the
+ * difference is larger, only the requested latitude and longitude are used
+ * and the existing Home altitude is retained. Set to 0 to always retain the
+ * existing Home altitude for specified-position commands. Automatic Home and
+ * use-current-position commands are not affected.
+ *
+ * @unit m
+ * @min 0
+ * @max 1000
+ * @decimal 1
+ * @increment 1
+ * @group Commander
+ */
+PARAM_DEFINE_FLOAT(COM_HOME_ALT_D, 30.0f);
+
+/**
  * Allows setting the home position after takeoff
  *
  * If set to true, the autopilot is allowed to set its home position after takeoff

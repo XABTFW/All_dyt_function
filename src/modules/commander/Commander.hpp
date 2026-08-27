@@ -336,6 +336,7 @@ private:
 		(ParamInt<px4::params::COM_HLDL_LOSS_T>)    _param_com_hldl_loss_t,
 		(ParamInt<px4::params::COM_HLDL_REG_T>)     _param_com_hldl_reg_t,
 		(ParamBool<px4::params::COM_HOME_EN>)       _param_com_home_en,
+		(ParamFloat<px4::params::COM_HOME_ALT_D>)   _param_com_home_alt_delta,
 		(ParamBool<px4::params::COM_HOME_IN_AIR>)   _param_com_home_in_air,
 		(ParamInt<px4::params::COM_FLT_PROFILE>)    _param_com_flt_profile,
 		(ParamBool<px4::params::COM_FORCE_SAFETY>)  _param_com_force_safety,
