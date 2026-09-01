@@ -72,6 +72,7 @@ set(msg_files
 	DytCommand.msg
 	DytGuidanceCommand.msg
 	DytGuidanceStatus.msg
+	DytMidcourseLog.msg
 	DytStatusReply.msg
 	DytTarget.msg
 	Ekf2Timestamps.msg

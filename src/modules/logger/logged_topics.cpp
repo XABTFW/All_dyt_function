@@ -59,7 +59,10 @@ void LoggedTopics::add_default_topics()
 	add_topic("config_overrides");
 	add_topic("cpuload");
 	add_topic("distance_sensor_mode_change_request");
+	add_optional_topic("dyt_command");
 	add_optional_topic("dyt_guidance_status", 100);
+	add_optional_topic("dyt_midcourse_log", 100);
+	add_optional_topic("dyt_target", 100);
 	add_topic_multi("dronecan_node_status", 250);
 	add_optional_topic("external_ins_attitude");
 	add_optional_topic("external_ins_global_position");
@@ -71,6 +74,7 @@ void LoggedTopics::add_default_topics()
 	add_optional_topic("follow_target", 500);
 	add_optional_topic("follow_target_estimator", 200);
 	add_optional_topic("follow_target_status", 400);
+	add_optional_topic("follower_info", 100);
 	add_optional_topic("flaps_setpoint", 1000);
 	add_optional_topic("flight_phase_estimation", 1000);
 	add_optional_topic("fuel_tank_status", 10);

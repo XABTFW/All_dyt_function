@@ -224,6 +224,20 @@ PARAM_DEFINE_INT32(DYTG_AUTO_N, 5);
 PARAM_DEFINE_INT32(DYTG_LOCK_N, 4);
 
 /**
+ * Lock request protection time
+ *
+ * Time reserved for the payload to complete a 0x06 lock request. During this
+ * interval, pointing or search commands do not replace the tracking request.
+ * The search-wait timeout is never shorter than this value.
+ *
+ * @unit ms
+ * @min 100
+ * @max 10000
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYTG_LOCK_MS, 2000);
+
+/**
  * Consecutive lock frames to recover from lost hold
  *
  * @min 1
@@ -514,11 +528,10 @@ PARAM_DEFINE_FLOAT(DYTG_MAXV, 8.0f);
 PARAM_DEFINE_FLOAT(DYTG_MAXACC, 4.0f);
 
 /**
- * Automatic net release minimum range
+ * Legacy net release minimum range
  *
- * Minimum valid forward-facing laser distance that permits automatic net
- * release. Automatic distance triggering is disabled unless this value is at
- * least 0.05 m and DYTG_RNG_MAX is greater than this value.
+ * Retained for compatibility with the former laser-distance release strategy.
+ * It is not used by the target-box automatic release strategy.
  *
  * @unit m
  * @min 0.0
@@ -529,11 +542,10 @@ PARAM_DEFINE_FLOAT(DYTG_MAXACC, 4.0f);
 PARAM_DEFINE_FLOAT(DYTG_RNG_MIN, 0.f);
 
 /**
- * Automatic net release maximum range
+ * Net release near-range diagnostic threshold
  *
- * Maximum valid forward-facing laser distance that permits automatic net
- * release. The measurement must be fresh and lie inclusively between
- * DYTG_RNG_MIN and DYTG_RNG_MAX.
+ * Retained as the laser near-range threshold for attitude diagnostics. It does
+ * not trigger target-box automatic release.
  *
  * @unit m
  * @min 0.0
@@ -546,9 +558,11 @@ PARAM_DEFINE_FLOAT(DYTG_RNG_MAX, 0.f);
 /**
  * Net release pitch action duration
  *
- * Duration of the adaptive aircraft pitch action after the manual or SDM50
- * range trigger. The gripper PWM release is delayed until this action has
- * completed. Set to 0 to release immediately without the pitch action.
+ * Duration of the line-of-sight alignment action after the manual or image
+ * distance trigger. With the default 300 ms action, the gripper PWM command is
+ * sent at 250 ms and the original post-release hold/braking logic starts when
+ * the action ends at 300 ms. If set below 250 ms, PWM is sent at action end.
+ * Set to 0 to release immediately without the attitude action.
  *
  * @unit ms
  * @min 0
@@ -560,9 +574,10 @@ PARAM_DEFINE_INT32(DYTG_SZ_MS, 300);
 /**
  * Adaptive net release pitch gain
  *
- * Gain applied to velocity elevation minus body -Z launch-axis elevation.
- * This is copied from the reference net-capture pitch action. A negative value
- * reverses the correction direction.
+ * Gain applied to target line-of-sight elevation minus body -Z launch-axis
+ * elevation. The net-capture calculation intentionally excludes DYTG_POFF and
+ * DYTG_YOFF, while retaining the configured gimbal-to-body mount rotation. A
+ * negative value reverses the correction direction.
  *
  * @min -10.0
  * @max 10.0
@@ -586,10 +601,10 @@ PARAM_DEFINE_FLOAT(DYTG_ALP_K, 1.0f);
 PARAM_DEFINE_FLOAT(DYTG_ALP_MAX, 10.0f);
 
 /**
- * Minimum speed for net release pitch correction
+ * Legacy minimum speed for net release pitch correction
  *
- * Below this 3-D ground speed the adaptive pitch correction is zero, while the
- * delayed release timing still runs normally.
+ * Retained for parameter compatibility. The image-triggered line-of-sight
+ * alignment does not use vehicle ground speed and ignores this parameter.
  *
  * @unit m/s
  * @min 0.1
@@ -603,7 +618,7 @@ PARAM_DEFINE_FLOAT(DYTG_ALP_VMIN, 1.0f);
  * Manual net release AUX channel
  *
  * Starts the same adaptive pitch action and delayed gripper release sequence as
- * the automatic distance trigger. This bypasses the laser distance window and
+ * the automatic bounding-box trigger. This bypasses the image-area threshold and
  * is intended for manual visual confirmation of the target.
  *
  * @value -1 Disabled
@@ -621,7 +636,7 @@ PARAM_DEFINE_INT32(DYTG_FIRE_AUX, -1);
  * Manual net release joystick button
  *
  * Starts the same adaptive pitch action and delayed gripper release sequence as
- * the automatic distance trigger. Button numbers match the zero-based numbering
+ * the automatic bounding-box trigger. Button numbers match the zero-based numbering
  * shown by QGroundControl.
  *
  * @value -1 Disabled
@@ -632,16 +647,44 @@ PARAM_DEFINE_INT32(DYTG_FIRE_AUX, -1);
 PARAM_DEFINE_INT32(DYTG_FIRE_BTN, -1);
 
 /**
- * Enable distance-triggered net release
+ * Enable fused target-range net release
  *
- * When enabled, a fresh valid forward-facing laser measurement between
- * DYTG_RNG_MIN and DYTG_RNG_MAX starts the adaptive pitch action. The gripper
- * release command is sent after DYTG_SZ_MS. Both range parameters must be set.
+ * A fresh locked visible-light target at zoom 1.0 is always required. The
+ * long-side image estimate provides continuity, while fresh gated SDM50 range
+ * and closing speed calibrate it. During laser dropouts the calibrated image
+ * estimate is used. Release starts when fused range is no greater than fused
+ * closing_speed * 0.3 s + DYTG_FIRE_D. The area fit remains diagnostic only.
  *
  * @boolean
  * @group DYT Guidance
  */
 PARAM_DEFINE_INT32(DYTG_FIRE_EN, 1);
+
+/**
+ * Enable laser/image range fusion
+ *
+ * Uses fresh gated SDM50 distance and closing speed to calibrate the continuous
+ * image estimate. Set to zero to retain the original image-only trigger.
+ *
+ * @boolean
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYTG_FUS_EN, 1);
+
+/**
+ * Net release base trigger distance
+ *
+ * Base distance added to the fused closing-speed lookahead. Automatic release
+ * starts when fused range is no greater than fused closing_speed * 0.3 s plus
+ * DYTG_FIRE_D.
+ *
+ * @unit m
+ * @min 0.1
+ * @max 12.0
+ * @decimal 2
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_FIRE_D, 1.6f);
 
 /**
  * Enable net release hold
@@ -1070,6 +1113,58 @@ PARAM_DEFINE_FLOAT(DYTG_POFF, 0.f);
  * @group DYT Guidance
  */
 PARAM_DEFINE_FLOAT(DYTG_YOFF, 0.f);
+
+/**
+ * Gimbal frame yaw minimum
+ *
+ * Minimum yaw frame angle that DYT guidance may command.
+ *
+ * @unit deg
+ * @min -180
+ * @max 0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_YAW_MIN, -40.f);
+
+/**
+ * Gimbal frame yaw maximum
+ *
+ * Maximum yaw frame angle that DYT guidance may command.
+ *
+ * @unit deg
+ * @min 0
+ * @max 180
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_YAW_MAX, 40.f);
+
+/**
+ * Gimbal frame pitch minimum
+ *
+ * Minimum pitch frame angle that DYT guidance may command.
+ *
+ * @unit deg
+ * @min -180
+ * @max 0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_PIT_MIN, -90.f);
+
+/**
+ * Gimbal frame pitch maximum
+ *
+ * Maximum pitch frame angle that DYT guidance may command.
+ *
+ * @unit deg
+ * @min 0
+ * @max 180
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_PIT_MAX, 40.f);
 
 /**
  * Midcourse mount rotation enable

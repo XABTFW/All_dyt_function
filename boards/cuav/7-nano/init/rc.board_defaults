@@ -6,334 +6,626 @@
 # TELEM1 data link. 1200 B/s forces the normal MAVLink streams to about 20% of
 # their requested rates once swarm and DYT telemetry are enabled. 8000 B/s
 # leaves serial framing headroom at 115200 baud and keeps range updates timely.
+# 限制 MAVLink 实例 0 的最大发送速率，单位 B/s。
 param set-default MAV_0_RATE 8000
 
 # Mavlink ethernet (CFG 1000)
+# 将 MAVLink 实例 2 分配到指定端口；1000 表示以太网。
 param set-default MAV_2_CONFIG 1000
+# 允许 MAVLink 实例 2 通过网络广播数据。
 param set-default MAV_2_BROADCAST 1
+# 设置 MAVLink 实例 2 的消息流模式；0 表示 Normal。
 param set-default MAV_2_MODE 0
+# 关闭 MAVLink 实例 2 的无线电状态控制。
 param set-default MAV_2_RADIO_CTL 0
+# 限制 MAVLink 实例 2 的最大发送速率，单位 B/s。
 param set-default MAV_2_RATE 100000
+# 设置 MAVLink 实例 2 的远端 UDP 端口。
 param set-default MAV_2_REMOTE_PRT 14550
+# 设置 MAVLink 实例 2 的本地 UDP 监听端口。
 param set-default MAV_2_UDP_PRT 14550
 
 # Flight defaults extracted from "打旋翼的反无参数.ulg".
 # Sensor/RC calibration and hardware/link-specific parameters are intentionally excluded.
 # ===== 导引头制导 DYTG（全部）（77 项）=====
-param set-default DYTG_ACT_AUX -1
-param set-default DYTG_ACT_BTN 2
+
+# 旧版网捕释放俯仰修正增益；当前四元数渐变控制不使用。
 param set-default DYTG_ALP_K 1
+# 旧版网捕释放允许的最大俯仰修正角，单位度；当前控制不使用。
 param set-default DYTG_ALP_MAX 10
+# 旧版俯仰修正生效的最小速度，单位 m/s；当前控制不使用。
 param set-default DYTG_ALP_VMIN 1
-param set-default DYTG_AUTO_EN 0
+
+# 自动激活制导所需的连续候选目标帧数。
 param set-default DYTG_AUTO_N 3
-param set-default DYTG_COOP_EN 1
+
+# 重新锁定前云台回中后的稳定等待时间，单位 ms。
 param set-default DYTG_CTRMS 400
+# 导引头图像、遥测与控制链路的固定延迟，单位 ms。
 param set-default DYTG_DLY_MS 120
+# 允许进入拦截状态的机头前向圆锥半角，单位度。
 param set-default DYTG_FCONE 40
+# 控制中途阶段是否使用导引头地理坐标跟踪协议。
 param set-default DYTG_GEO_EN 0
+# 中途速度向末制导速度设定值过渡的混合时间，单位 s。
 param set-default DYTG_HOFF_T 0.800000012
+# 允许进入拦截制导的最大数据延迟，单位 s。
 param set-default DYTG_INTDLY 0.180000007
+# 选择跟随/拦截状态所使用的 AUX 通道。
 param set-default DYTG_INT_AUX 2
+# 跟随模式的视线角加速度增益。
 param set-default DYTG_KA_FOL 0.5
+# 拦截模式的视线角加速度增益。
 param set-default DYTG_KA_INT 2
+# 跟随模式的速度阻尼增益。
 param set-default DYTG_KV_FOL 0.800000012
+# 拦截模式的速度阻尼增益。
 param set-default DYTG_KV_INT 1.20000005
+# 从搜索进入锁定跟踪所需的连续锁定帧数。
 param set-default DYTG_LOCK_N 2
+# 丢失目标后保持或搜索的总超时时间，单位 ms。
 param set-default DYTG_LOSTMS 240000
+# 目标视线 LOS 的低通滤波系数。
 param set-default DYTG_LPF_A 0.699999988
+# 设置导引头 LOS X 轴数据的符号方向。
 param set-default DYTG_LXSIGN 1
+# 设置导引头 LOS Y 轴数据的符号方向。
 param set-default DYTG_LYSIGN 1
+# 限制导引控制使用的最大加速度前馈，单位 m/s²。
 param set-default DYTG_MAXACC 4
+# 允许使用的目标数据最大年龄，单位 s。
 param set-default DYTG_MAXAGE 0.5
-param set-default DYTG_MAXDZ 6
+# 限制导引输出的最大垂直速度绝对值，单位 m/s。
+#param set-default DYTG_MAXDZ 6
+# 允许的最大目标帧间隔或时间抖动，单位 s。
 param set-default DYTG_MAXJIT 0.300000012
+# 限制导引输出的最大水平速度，单位 m/s。
 param set-default DYTG_MAXV 47
+# 限制导引期间的最大偏航角速度，单位 deg/s。
 param set-default DYTG_MAXYAWR 120
+# 启用云台安装姿态旋转补偿。
 param set-default DYTG_MNT_EN 1
+# 设置云台相对机体的安装俯仰角，单位度。
 param set-default DYTG_MNT_P 90
+# 设置中途云台指向的预测时间，单位 s；0 表示关闭预测。
 param set-default DYTG_MNT_PRED 0
+# 设置云台相对机体的安装滚转角，单位度。
 param set-default DYTG_MNT_R 0
+# 设置云台相对机体的安装偏航角，单位度。
 param set-default DYTG_MNT_Y 0
+# 设置跟随模式的比例导引系数。
 param set-default DYTG_N_FOL 0.600000024
+# 设置拦截模式的比例导引系数。
 param set-default DYTG_N_INT 3.5
+# 设置导引头俯仰角零位偏移，单位度。
 param set-default DYTG_POFF -12
+# 限制目标 LOS 的最大预测时间，单位 s。
 param set-default DYTG_PREDMAX 0.0299999993
+# 设置导引头俯仰角的符号方向。
 param set-default DYTG_PSIGN 1
+# 丢失目标后恢复跟踪所需的连续锁定帧数。
 param set-default DYTG_RELOCKN 20
+# 设置导引头滚转角零位偏移，单位度。
 param set-default DYTG_ROFF 0
+# 设置导引头滚转角的符号方向。
 param set-default DYTG_RSIGN 1
+# 丢失目标后的重新锁定尝试间隔，单位 ms。
 param set-default DYTG_RTRYMS 500
+# 设置搜索过程中每个位置的停留时间，单位 s。
 param set-default DYTG_SC_DWEL 0.200000003
+# 设置云台扫描到边缘时的暂停时间，单位 s。
 param set-default DYTG_SC_PAUSE 0.0500000007
+# 设置丢失目标搜索时的云台俯仰速度，单位 deg/s。
 param set-default DYTG_SC_PSPD 3
+# 设置搜索扫描每次换行的俯仰步长，单位度。
 param set-default DYTG_SC_STEP 20
+# 设置丢失目标搜索时的云台偏航速度，单位 deg/s。
 param set-default DYTG_SC_YSPD 3
+# 设置搜索扫描的偏航步长，单位度。
 param set-default DYTG_SC_YSTP 10
+# 设置人工摇杆接管导引控制的输入阈值。
 param set-default DYTG_STK_TK 0.300000012
+# 设置人工触发网捕释放后的俯仰动作持续时间，单位 ms。
 param set-default DYTG_SZ_MS 300
+# 设置中途制导目标高度的附加偏移，单位 m。
 param set-default DYTG_TGT_ALTOFF 0
+# 设置中途指向目标的 MAVLink 系统 ID。
 param set-default DYTG_TGT_ID 1
+# 设置中途目标位置共享数据的最大超时时间，单位 s。
 param set-default DYTG_TGT_TO 10
+# 设置导引计算使用的最小闭合速度，单位 m/s。
 param set-default DYTG_VMIN 1
+# 设置跟随模式的指令速度，单位 m/s。
 param set-default DYTG_V_FOL 50
+# 设置拦截模式的指令速度，单位 m/s。
 param set-default DYTG_V_INT 6
+# 设置启动搜索后等待目标锁定的超时时间，单位 ms。
 param set-default DYTG_WAITMS 2500
+# 设置目标接近垂直方向时的水平 LOS 死区。
 param set-default DYTG_XYDB 0.119999997
+# 设置产生完整水平跟踪输出所需的 LOS 大小。
 param set-default DYTG_XYFULL 0.850000024
+# 启用水平越过目标保护。
 param set-default DYTG_XYOVR_EN 1
+# 设置越过保护激活时的最小水平控制缩放比例。
 param set-default DYTG_XYOVR_MIN 0.150000006
+# 设置达到完整越过保护时的反向水平闭合速度，单位 m/s。
 param set-default DYTG_XYOVR_V 2
+# 设置启动水平越过保护的垂直 LOS 阈值。
 param set-default DYTG_XYOVR_Z 0.600000024
+# 启用水平 LOS 转速过快保护。
 param set-default DYTG_XYROT_EN 1
+# 设置 LOS 转速保护激活时的最小水平控制缩放比例。
 param set-default DYTG_XYROT_MIN 0.150000006
+# 设置达到完整保护时的水平 LOS 旋转角速度，单位 rad/s。
 param set-default DYTG_XYROT_W 0.800000012
+# 限制水平速度设定值的最大变化率，单位 m/s²。
 param set-default DYTG_XYSLEW 6
+# 限制机体航向相对目标 LOS 的最大滞后角，单位度。
 param set-default DYTG_YAWLIM 30
+# 设置启动航向跟踪所需的最小水平 LOS。
 param set-default DYTG_YAWLOS 0.119999997
+# 设置导引头偏航角零位偏移，单位度。
 param set-default DYTG_YOFF -7
+# 设置导引头偏航角的符号方向。
 param set-default DYTG_YSIGN 1
+# 设置垂直跟踪速度的缩放系数。
 param set-default DYTG_ZSCALE 0.300000012
+# 启用垂直误差较大时的水平速度削减。
 param set-default DYTG_ZXY_EN 1
+# 设置达到最大水平削减时的垂直 LOS 阈值。
 param set-default DYTG_ZXY_FULL 0.800000012
+# 设置垂直优先跟踪期间的最小水平控制缩放比例。
 param set-default DYTG_ZXY_MIN 0.349999994
 
 # ===== 导引头驱动 DYT（全部）（21 项）=====
+# 设置 DYT 导引头独立串口的通信波特率。
 param set-default DYT_BAUD 115200
+# 启用地理跟踪协议中的完整云台安装旋转补偿。
 param set-default DYT_GEO_MNT_EN 0
+# 设置地理跟踪使用的云台安装俯仰角，单位度。
 param set-default DYT_GEO_MNT_P 0
+# 设置地理跟踪使用的云台安装滚转角，单位度。
 param set-default DYT_GEO_MNT_R 0
+# 设置地理跟踪使用的云台安装偏航角，单位度。
 param set-default DYT_GEO_MNT_Y 0
+# 设置地理跟踪协议中的本机俯仰角偏移，单位度。
 param set-default DYT_GEO_POFF 0
+# 设置地理跟踪协议中的本机俯仰角符号。
 param set-default DYT_GEO_PSIGN 1
+# 设置地理跟踪协议中的本机滚转角偏移，单位度。
 param set-default DYT_GEO_ROFF 0
+# 设置地理跟踪协议中的本机滚转角符号。
 param set-default DYT_GEO_RSIGN 1
+# 设置地理跟踪协议中的本机偏航角偏移，单位度。
 param set-default DYT_GEO_YOFF 0
+# 设置地理跟踪协议中的本机偏航角符号。
 param set-default DYT_GEO_YSIGN 1
+# 设置打开串口后首次发送云台归位命令的延迟，单位 ms。
 param set-default DYT_HOME_DLY 3000
+# 设置启动归位命令的重复发送持续时间，单位 ms。
 param set-default DYT_HOME_DUR 10000
-param set-default DYT_HOME_EN 1
+# 启用 DYT 驱动启动后的云台归位命令。
+param set-default DYT_HOME_EN 0
+# 设置启动归位命令的重复发送间隔，单位 ms。
 param set-default DYT_HOME_INT 500
+# 设置云台启动归位的俯仰角，单位度。
 param set-default DYT_HOME_PIT -90
+# 设置云台启动归位的偏航角，单位度。
 param set-default DYT_HOME_YAW 0
+# 设置导引头解码调试日志周期，单位 ms；0 表示关闭。
 param set-default DYT_LOG_MS 0
+# 控制是否输出导引头原始十六进制协议帧。
 param set-default DYT_RAWLOG 0
+# 设置导引头串口打开失败后的重试间隔，单位 ms。
 param set-default DYT_RTRY_MS 1000
+# 设置导引头遥测接收超时时间，单位 ms。
 param set-default DYT_TO_MS 300
 
 # ===== CRDZ（全部）（20 项）=====
+# 设置协同会合模块的启用 AUX 通道；-1 表示不使用。
 param set-default CRDZ_ACT_AUX -1
+# 设置协同会合模块的启用摇杆按钮编号。
 param set-default CRDZ_ACT_BTN 0
-param set-default CRDZ_ALT_DIFF 0
+param set-default DYTG_ACT_BTN 2
+# 设置本机相对目标的期望高度差，正值表示本机在上方，单位 m。
+#param set-default CRDZ_ALT_DIFF 0
+# 设置接近目标相对位置时附加的水平闭合速度，单位 m/s。
 param set-default CRDZ_APP_SPD 4
-param set-default CRDZ_DIST 0
+# 设置本机与目标保持的水平距离，单位 m。
+#param set-default CRDZ_DIST 0
+# 启用到达目标附近后的定点保持逻辑。
 param set-default CRDZ_HOLD_EN 0
+# 设置判定进入到达保持的水平半径，单位 m。
 param set-default CRDZ_HOLD_HRAD 3
+# 选择到达目标后的保持位置模式。
 param set-default CRDZ_HOLD_MODE 1
+# 设置退出到达保持状态的释放半径，单位 m。
 param set-default CRDZ_HOLD_REL 5
+# 设置进入保持前必须持续满足到达条件的时间，单位 s。
 param set-default CRDZ_HOLD_T 2
+# 设置允许进入保持状态的目标最大速度，单位 m/s。
 param set-default CRDZ_HOLD_VEL 5
+# 设置判定进入到达保持的垂直半径，单位 m。
 param set-default CRDZ_HOLD_VRAD 1.5
 
+# 设置接近目标时开始减速的水平半径，单位 m。
 param set-default CRDZ_SLOW_RAD 20
+# 限制目标位置数据允许的最大突跳距离，单位 m。
 param set-default CRDZ_TPOS_JMP 7
+# 设置目标位置低通滤波时间常数，单位 s。
 param set-default CRDZ_TPOS_TC 0.5
+# 启用网捕释放后的保持阶段。
 param set-default DYTG_HOLD_EN 1
+# 启用网捕释放阶段的减速逻辑。
 param set-default DYTG_NET_EN 1
+# 设置网捕减速或停止距离，单位 m。
 param set-default DYTG_STOP_D 0.5
+# 设置目标速度低通滤波时间常数，单位 s。
 param set-default CRDZ_TVEL_TC 0.5
+# 设置本机在 DYT 导引系统中的飞行器角色。
 param set-default DYT_VEH_TYPE 2
+# 设置 Tweety V2 手动像素到视线角的缩放系数。
 param set-default DYT_LOS_SC 0.05
+# 启用基于目标距离的自动网捕释放。
 param set-default DYTG_FIRE_EN 1
+# 限制协同会合水平速度命令的变化率，单位 m/s²。
 param set-default CRDZ_VSLEW 3
-param set-default CRDZ_XY_OFF_EN 0
-param set-default CRDZ_X_OFF 30
-param set-default CRDZ_Y_OFF 0
+# 启用明确的目标 NED 水平位置偏移。
+#param set-default CRDZ_XY_OFF_EN 0
+# 设置目标相对位置的 NED X/北向偏移，单位 m。
+#param set-default CRDZ_X_OFF 30
+# 设置目标相对位置的 NED Y/东向偏移，单位 m。
+#param set-default CRDZ_Y_OFF 0
+# 选择中途阶段使用的云台角度命令模式。
 param set-default DYTG_MNT_MODE 0
+# 选择中途制导目标高度的解释方式。
 param set-default DYTG_ALT_MODE 1
 
+param set-default DYTG_ACT_AUX -1
+# 启用自定义通信紧急处置模块。
 param set-default CEM_EN 1
+# 选择通信丢失超时后的处置动作。
 param set-default CEM_TO_ACT 0
 
 # ===== 多旋翼姿态/角速度控制 MC（全部）（53 项）=====
+# 设置 Acro 模式横滚和俯仰摇杆指数曲线。
 param set-default MC_ACRO_EXPO 0
+# 设置 Acro 模式偏航摇杆指数曲线。
 param set-default MC_ACRO_EXPO_Y 0
+# 限制 Acro 模式最大俯仰角速度，单位 deg/s。
 param set-default MC_ACRO_P_MAX 100
+# 限制 Acro 模式最大横滚角速度，单位 deg/s。
 param set-default MC_ACRO_R_MAX 100
+# 设置 Acro 模式横滚和俯仰 SuperExpo 曲线。
 param set-default MC_ACRO_SUPEXPO 0
+# 设置 Acro 模式偏航 SuperExpo 曲线。
 param set-default MC_ACRO_SUPEXPOY 0
+# 限制 Acro 模式最大偏航角速度，单位 deg/s。
 param set-default MC_ACRO_Y_MAX 100
+# 选择多旋翼 Airmode，控制低推力时是否保持姿态力矩能力。
 param set-default MC_AIRMODE 0
+# 选择自动调参新控制增益的应用时机。
 param set-default MC_AT_APPLY 1
+# 启用多旋翼姿态自动调参模块。
 param set-default MC_AT_EN 1
+# 设置自动调参期望的角速度闭环上升时间，单位 s。
 param set-default MC_AT_RISE_TIME 0.140000001
+# 触发多旋翼姿态自动调参序列。
 param set-default MC_AT_START 0
+# 设置自动调参系统辨识注入信号的幅值。
 param set-default MC_AT_SYSID_AMP 0.699999988
+# 控制是否根据电池电压缩放角速度控制输出。
 param set-default MC_BAT_SCALE_EN 0
+# 设置人工倾斜输入的滤波时间常数，单位 s。
 param set-default MC_MAN_TILT_TAU 0
+# 限制绕点飞行的最大半径，单位 m。
 param set-default MC_ORBIT_RAD_MAX 1000
+# 选择绕点飞行期间的机头航向行为。
 param set-default MC_ORBIT_YAW_MOD 0
+# 设置俯仰角速度环微分增益。
 param set-default MC_PITCHRATE_D 0
+# 设置俯仰角速度环前馈增益。
 param set-default MC_PITCHRATE_FF 0
+# 设置俯仰角速度环积分增益。
 param set-default MC_PITCHRATE_I 0.119999997
+# 设置俯仰角速度控制器总缩放增益。
 param set-default MC_PITCHRATE_K 1
+# 限制姿态模式最大俯仰角速度，单位 deg/s。
 param set-default MC_PITCHRATE_MAX 180
+# 设置俯仰角速度环比例增益。
 param set-default MC_PITCHRATE_P 0.100000001
+# 设置俯仰姿态误差比例增益。
 param set-default MC_PITCH_P 4.5
+# 限制俯仰角速度积分器输出。
 param set-default MC_PR_INT_LIM 0.300000012
+# 设置横滚角速度环微分增益。
 param set-default MC_ROLLRATE_D 0
+# 设置横滚角速度环前馈增益。
 param set-default MC_ROLLRATE_FF 0
+# 设置横滚角速度环积分增益。
 param set-default MC_ROLLRATE_I 0.119999997
+# 设置横滚角速度控制器总缩放增益。
 param set-default MC_ROLLRATE_K 1
+# 限制姿态模式最大横滚角速度，单位 deg/s。
 param set-default MC_ROLLRATE_MAX 180
+# 设置横滚角速度环比例增益。
 param set-default MC_ROLLRATE_P 0.100000001
+# 设置横滚姿态误差比例增益。
 param set-default MC_ROLL_P 4.5
+# 限制横滚角速度积分器输出。
 param set-default MC_RR_INT_LIM 0.300000012
+# 设置慢速模式默认水平速度上限，单位 m/s。
 param set-default MC_SLOW_DEF_HVEL 3
+# 设置慢速模式默认垂直速度上限，单位 m/s。
 param set-default MC_SLOW_DEF_VVEL 1
+# 设置慢速模式默认偏航角速度上限，单位 deg/s。
 param set-default MC_SLOW_DEF_YAWR 45
+# 设置慢速模式水平速度缩放所使用的 AUX 映射。
 param set-default MC_SLOW_MAP_HVEL 0
+# 设置慢速模式云台俯仰速度所使用的 AUX 映射。
 param set-default MC_SLOW_MAP_PTCH 0
+# 设置慢速模式垂直速度缩放所使用的 AUX 映射。
 param set-default MC_SLOW_MAP_VVEL 0
+# 设置慢速模式偏航速度缩放所使用的 AUX 映射。
 param set-default MC_SLOW_MAP_YAWR 0
+# 设置慢速模式水平速度的最小限制，单位 m/s。
 param set-default MC_SLOW_MIN_HVEL 0.300000012
+# 设置慢速模式垂直速度的最小限制，单位 m/s。
 param set-default MC_SLOW_MIN_VVEL 0.300000012
+# 设置慢速模式偏航角速度的最小限制，单位 deg/s。
 param set-default MC_SLOW_MIN_YAWR 3
+# 设置偏航角速度环微分增益。
 param set-default MC_YAWRATE_D 0
+# 设置偏航角速度环前馈增益。
 param set-default MC_YAWRATE_FF 0
+# 设置偏航角速度环积分增益。
 param set-default MC_YAWRATE_I 0.100000001
+# 设置偏航角速度控制器总缩放增益。
 param set-default MC_YAWRATE_K 1
+# 限制姿态模式最大偏航角速度，单位 deg/s。
 param set-default MC_YAWRATE_MAX 90
+# 设置偏航角速度环比例增益。
 param set-default MC_YAWRATE_P 0.200000003
+# 设置偏航姿态误差比例增益。
 param set-default MC_YAW_P 2
+# 设置偏航力矩设定值低通滤波截止频率，单位 Hz。
 param set-default MC_YAW_TQ_CUTOFF 2
+# 设置姿态控制中偏航误差的权重。
 param set-default MC_YAW_WEIGHT 0.400000006
+# 限制偏航角速度积分器输出。
 param set-default MC_YR_INT_LIM 0.300000012
 
 # ===== 多旋翼位置/速度控制 MPC（全部）（64 项）=====
+# 控制位置控制器加速度到倾角转换时的耦合方式。
 param set-default MPC_ACC_DECOUPLE 1
+# 限制下降方向的最大加速度，单位 m/s²。
 param set-default MPC_ACC_DOWN_MAX 3
+# 设置自动模式及人工模式使用的水平加速度，单位 m/s²。
 param set-default MPC_ACC_HOR 5
+# 限制人工位置模式的最大水平加速度，单位 m/s²。
 param set-default MPC_ACC_HOR_MAX 6
+# 限制上升方向的最大加速度，单位 m/s²。
 param set-default MPC_ACC_UP_MAX 4
+# 选择高度参考模式：本地原点、对地或静止时对地。
 param set-default MPC_ALT_MODE 2
+# 旧版高度保持摇杆死区参数；当前源码已无此参数定义。
 param set-default MPC_HOLD_DZ 0.100000001
+# 设置允许启用位置保持的最大水平速度，单位 m/s。
 param set-default MPC_HOLD_MAX_XY 0.800000012
+# 设置允许启用高度保持的最大垂直速度，单位 m/s。
 param set-default MPC_HOLD_MAX_Z 0.600000024
+# 限制自动模式加速度的最大变化率，单位 m/s³。
 param set-default MPC_JERK_AUTO 6
+# 限制人工位置/高度模式的最大加加速度，单位 m/s³。
 param set-default MPC_JERK_MAX 8
+# 设置着陆第一阶段开始逐渐减速的离地高度，单位 m。
 param set-default MPC_LAND_ALT1 10
+# 设置着陆第二阶段切换到着陆速度的离地高度，单位 m。
 param set-default MPC_LAND_ALT2 5
+# 设置有测距仪时切换到爬行下降速度的离地高度，单位 m。
 param set-default MPC_LAND_ALT3 1
+# 设置近地爬行下降速度，单位 m/s。
 param set-default MPC_LAND_CRWL 0.300000012
+# 限制摇杆辅助着陆相对原着陆点的最大水平位移，单位 m。
 param set-default MPC_LAND_RADIUS 1000
+# 控制自动着陆过程中是否允许摇杆修正位置和航向。
 param set-default MPC_LAND_RC_HELP 0
+# 设置正常着陆下降速度，单位 m/s。
 param set-default MPC_LAND_SPEED 0.699999988
+# 设置 Stabilized 模式最低总推力。
 param set-default MPC_MANTHR_MIN 0.0799999982
+# 限制 Stabilized、Altitude 模式的人工最大倾角，单位度。
 param set-default MPC_MAN_TILT_MAX 60
+# 限制人工控制的最大偏航角速度，单位 deg/s。
 param set-default MPC_MAN_Y_MAX 150
+# 设置人工偏航角速度输入滤波时间常数，单位 s。
 param set-default MPC_MAN_Y_TAU 0.0799999982
+# 选择 Position/Altitude 模式的摇杆控制算法。
 param set-default MPC_POS_MODE 4
+# 选择 Stabilized 模式油门摇杆到总推力的映射曲线。
 param set-default MPC_THR_CURVE 0
+# 设置飞行器悬停所需的归一化总推力。
 param set-default MPC_THR_HOVER 0.360000014
+# 限制高度控制模式的最大归一化总推力。
 param set-default MPC_THR_MAX 1
+# 限制高度控制模式的最小归一化总推力。
 param set-default MPC_THR_MIN 0.119999997
+# 设置垂直推力饱和时为水平控制保留的推力余量。
 param set-default MPC_THR_XY_MARG 0.300000012
+# 限制速度或加速度控制模式的空中最大倾角，单位度。
 param set-default MPC_TILTMAX_AIR 60
+# 限制起飞初始阶段的最大倾角，单位度。
 param set-default MPC_TILTMAX_LND 8
+# 设置起飞爬升速度平滑上升的时间常数，单位 s。
 param set-default MPC_TKO_RAMP_T 3
+# 设置自动起飞爬升速度，单位 m/s。
 param set-default MPC_TKO_SPEED 3
+# 控制高度控制器是否使用在线悬停推力估计。
 param set-default MPC_USE_HTE 1
+# 设置速度微分信号低通滤波截止频率，单位 Hz。
 param set-default MPC_VELD_LP 5
+# 设置速度信号低通滤波截止频率，单位 Hz；0 表示关闭。
 param set-default MPC_VEL_LP 0
-param set-default MPC_VEL_MANUAL 3
+# 限制 Position 模式最大人工水平速度，单位 m/s。
+param set-default MPC_VEL_MANUAL 6
+# 限制 Position 模式最大后退速度；负值表示使用人工总上限。
 param set-default MPC_VEL_MAN_BACK -1
+# 限制 Position 模式最大侧向速度；负值表示使用人工总上限。
 param set-default MPC_VEL_MAN_SIDE -1
+# 设置速度陷波滤波器带宽，单位 Hz。
 param set-default MPC_VEL_NF_BW 5
+# 设置速度陷波滤波器中心频率，单位 Hz；0 表示关闭。
 param set-default MPC_VEL_NF_FRQ 0
+# 设置任务、RTL 和 Goto 的默认水平巡航速度，单位 m/s。
 param set-default MPC_XY_CRUISE 3
+# 设置轨迹生成器允许的最大水平跟踪误差，单位 m。
 param set-default MPC_XY_ERR_MAX 2
+# 旧版人工水平摇杆 Expo 参数；当前源码已无此参数定义。
 param set-default MPC_XY_MAN_EXPO 0.600000024
+# 设置水平位置误差比例增益。
 param set-default MPC_XY_P 1.10000002
+# 设置水平轨迹位置误差比例增益。
 param set-default MPC_XY_TRAJ_P 0.5
+# 批量设置总体水平速度限制；负值表示不联动其他速度参数。
 param set-default MPC_XY_VEL_ALL -10
+# 设置水平速度环微分加速度增益。
 param set-default MPC_XY_VEL_D_ACC 0.200000003
+# 设置水平速度环积分加速度增益。
 param set-default MPC_XY_VEL_I_ACC 0.5
+# 限制所有速度控制模式的最大水平速度，单位 m/s。
 param set-default MPC_XY_VEL_MAX 45
+# 设置水平速度环比例加速度增益。
 param set-default MPC_XY_VEL_P_ACC 2
+# 限制自动模式偏航设定值最大角加速度，单位 deg/s²。
 param set-default MPC_YAWRAUTO_ACC 20
+# 限制自动模式偏航设定值最大角速度，单位 deg/s。
 param set-default MPC_YAWRAUTO_MAX 60
+# 旧版人工偏航摇杆 Expo 参数；当前源码已无此参数定义。
 param set-default MPC_YAW_EXPO 0.600000024
+# 选择自动模式中的航向控制策略。
 param set-default MPC_YAW_MODE 0
+# 旧版人工垂直摇杆 Expo 参数；当前源码已无此参数定义。
 param set-default MPC_Z_MAN_EXPO 0.600000024
+# 设置垂直位置误差比例增益。
 param set-default MPC_Z_P 1
+# 批量设置总体垂直速度限制；负值表示不联动其他速度参数。
 param set-default MPC_Z_VEL_ALL -3
+# 设置垂直速度环微分加速度增益。
 param set-default MPC_Z_VEL_D_ACC 0
+# 设置垂直速度环积分加速度增益。
 param set-default MPC_Z_VEL_I_ACC 2
+# 限制所有高度控制模式的最大下降速度，单位 m/s。
 param set-default MPC_Z_VEL_MAX_DN 20
+# 限制所有高度控制模式的最大上升速度，单位 m/s。
 param set-default MPC_Z_VEL_MAX_UP 30
+# 设置垂直速度环比例加速度增益。
 param set-default MPC_Z_VEL_P_ACC 4
+# 设置自动模式默认下降速度，单位 m/s。
 param set-default MPC_Z_V_AUTO_DN 3
+# 设置自动模式默认上升速度，单位 m/s。
 param set-default MPC_Z_V_AUTO_UP 5
 
 # ===== 其他关键基本飞行参数（非默认配置）（33 项）=====
+# 设置电流采样比例，即 ADC 每伏对应的电流安培数。
 param set-default BAT1_A_PER_V 24
+# 设置主电池串联电芯数量。
 param set-default BAT1_N_CELLS 6
+# 设置主电池单节满电电压，单位 V。
 param set-default BAT1_V_CHARGED 4.19999981
+# 设置主电池电压采样分压比。
 param set-default BAT1_V_DIV 31
+# 设置旋翼 0 相对重心的机体 X 轴位置。
 param set-default CA_ROTOR0_PX 1
+# 设置旋翼 0 相对重心的机体 Y 轴位置。
 param set-default CA_ROTOR0_PY 1
+# 设置旋翼 1 相对重心的机体 X 轴位置。
 param set-default CA_ROTOR1_PX -1
+# 设置旋翼 1 相对重心的机体 Y 轴位置。
 param set-default CA_ROTOR1_PY -1
+# 设置旋翼 2 的反扭矩/推力系数及旋转方向符号。
 param set-default CA_ROTOR2_KM -0.0500000007
+# 设置旋翼 2 相对重心的机体 X 轴位置。
 param set-default CA_ROTOR2_PX 1
+# 设置旋翼 2 相对重心的机体 Y 轴位置。
 param set-default CA_ROTOR2_PY -1
+# 设置旋翼 3 的反扭矩/推力系数及旋转方向符号。
 param set-default CA_ROTOR3_KM -0.0500000007
+# 设置旋翼 3 相对重心的机体 X 轴位置。
 param set-default CA_ROTOR3_PX -1
+# 设置旋翼 3 相对重心的机体 Y 轴位置。
 param set-default CA_ROTOR3_PY 1
+# 设置控制分配器使用的旋翼总数。
 param set-default CA_ROTOR_COUNT 4
+# 设置 RC/摇杆数据丢失判定时间，单位 s；期间会继续使用最后输入。
 param set-default COM_RC_LOSS_T 300
+# 限制角速度控制数据发布频率及内环运行频率，单位 Hz。
 param set-default IMU_GYRO_RATEMAX 800
-param set-default PWM_MAIN_FUNC1 104
-param set-default PWM_MAIN_FUNC2 102
-param set-default PWM_MAIN_FUNC3 103
-param set-default PWM_MAIN_FUNC4 101
+
+# 设置 MAIN 输出通道 1 的最大输出值。
 param set-default PWM_MAIN_MAX1 1900
+# 设置 MAIN 输出通道 2 的最大输出值。
 param set-default PWM_MAIN_MAX2 1900
+# 设置 MAIN 输出通道 3 的最大输出值。
 param set-default PWM_MAIN_MAX3 1900
+# 设置 MAIN 输出通道 4 的最大输出值。
 param set-default PWM_MAIN_MAX4 1900
+# 设置 MAIN 输出通道 1 的最小输出值。
 param set-default PWM_MAIN_MIN1 1100
+# 设置 MAIN 输出通道 2 的最小输出值。
 param set-default PWM_MAIN_MIN2 1100
+# 设置 MAIN 输出通道 3 的最小输出值。
 param set-default PWM_MAIN_MIN3 1100
+# 设置 MAIN 输出通道 4 的最小输出值。
 param set-default PWM_MAIN_MIN4 1100
+# 设置 MAIN 第一组定时器的输出协议；-4 表示 DShot300。
 param set-default PWM_MAIN_TIM0 -4
+# 设置 RTL 到达返回点后下降并盘旋等待的高度，单位 m。
 param set-default RTL_DESCEND_ALT 10
+# 设置 RTL 返回飞行使用的最低返回高度，单位 m。
 param set-default RTL_RETURN_ALT 30
+# 设置开机加载的 airframe 启动脚本编号；4001 为 Quad X。
 param set-default SYS_AUTOSTART 4001
 
+# 设置 USB MAVLink 消息流模式；5 表示配置模式。
 param set-default USB_MAV_MODE 5
 
 # GPS is connected through CAN. Reserve GPS1 for the forward-facing SDM50.
+# 设置主 GPS 驱动占用的串口；0 表示禁用。
 param set GPS_1_CONFIG 0
 
 # MT-06 MAVLink rangefinder on GPS2.
+# 设置副 GPS 驱动占用的串口；0 表示禁用。
 param set GPS_2_CONFIG 0
+# 设置 MAVLink 实例 1 使用的端口；202 表示 GPS2。
 param set MAV_1_CONFIG 202
+# 设置 MAVLink 实例 1 的消息流模式；0 表示 Normal。
 param set MAV_1_MODE 0
+# 设置 GPS2 物理串口波特率。
 param set SER_GPS2_BAUD 115200
+# 设置测距仪高度融合模式；1 表示满足低速、低高度条件时融合。
 param set EKF2_RNG_CTRL 1
+# 选择 EKF 高度基准；0 表示气压计。
 param set EKF2_HGT_REF 0
 
 # ToF fast touchdown test settings.
+# 启用基于向下 ToF 测距的多旋翼快速触地检测。
 param set LNDMC_TD_EN 1
+# 设置 ToF 快速触地的传感器到地面距离阈值，单位 m。
 param set LNDMC_TD_DIST 0.1
+# 设置允许快速触地判定的最大本地/Home 高度，单位 m。
 param set LNDMC_TD_ALT 5.0
+# 设置 ToF 触地条件的最小持续确认时间，单位 s。
 param set LNDMC_TD_TIME 0.04
+# 设置检测着陆后自动解除武装的等待时间，单位 s。
 param set COM_DISARM_LAND 0.05
 
 # The custom communication emergency module owns RC and GCS link-loss mode changes.
+# 选择 RC 丢失后的原生失效保护动作；0 表示不执行动作。
 param set NAV_RCL_ACT 0
+# 设置忽略 RC 丢失保护的飞行模式位掩码。
 param set COM_RCL_EXCEPT 7
+# 选择地面站数据链丢失后的原生失效保护动作；0 表示不执行动作。
 param set NAV_DLL_ACT 0
 
 safety_button start

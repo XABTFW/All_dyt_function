@@ -57,6 +57,30 @@ bool controlling_vehicle   # true when this module owns the trajectory/offboard 
 bool target_fresh
 bool intercept_allowed
 
+# Raw image-based net-release estimator. The long-side distance feeds the
+# laser/image fusion; area distance and disagreement remain diagnostics.
+# Positive speed means approaching.
+bool image_range_valid
+bool image_closing_speed_valid
+float32 bbox_area_ratio
+float32 image_distance_area_m
+float32 image_distance_long_m
+float32 image_distance_disagreement_m
+float32 image_closing_speed_m_s
+float32 image_trigger_distance_m
+
+# Laser/image complementary fusion used by the automatic net-release trigger.
+# Bias is raw image estimate minus accepted laser estimate.
+bool fused_range_valid
+bool fused_closing_speed_valid
+bool laser_fusion_used
+float32 fused_distance_m
+float32 fused_closing_speed_m_s
+float32 laser_distance_m
+float32 laser_closing_speed_m_s
+float32 image_distance_bias_m
+float32 image_speed_bias_m_s
+
 float32 los_age_s
 float32 frame_dt_s
 float32 delay_s

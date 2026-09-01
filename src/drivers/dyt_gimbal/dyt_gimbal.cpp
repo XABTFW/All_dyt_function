@@ -66,7 +66,6 @@ private:
 	static constexpr size_t LASER_FRAME_LEN{14};
 	static constexpr size_t FLIGHT_DATA_FRAME_LEN{42};
 	static constexpr hrt_abstime LASER_FRESHNESS{500_ms};
-	static constexpr hrt_abstime TRACKING_MODE_GUARD{1200_ms};
 
 	static constexpr uint8_t MODE_DISABLE{0x00};
 	static constexpr uint8_t MODE_HOME{0x02};
@@ -199,7 +198,8 @@ private:
 		(ParamInt<px4::params::DYT_VIS_H>) _param_dyt_visible_height_px,
 		(ParamInt<px4::params::DYT_IR_W>) _param_dyt_infrared_width_px,
 		(ParamInt<px4::params::DYT_IR_H>) _param_dyt_infrared_height_px,
-		(ParamInt<px4::params::DYT_TRK_VAL>) _param_dyt_tracking_value
+		(ParamInt<px4::params::DYT_TRK_VAL>) _param_dyt_tracking_value,
+		(ParamInt<px4::params::DYTG_LOCK_MS>) _param_dyt_lock_hold_ms
 	)
 };
 
@@ -570,8 +570,14 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.motor_on = frame[6] != MODE_DISABLE;
 	target.laser_on = _last_laser_time > 0 && now - _last_laser_time <= LASER_FRESHNESS && PX4_ISFINITE(_last_range_m);
 	target.range_m = target.laser_on ? _last_range_m : NAN;
-	target.bbox_width_px = NAN;
-	target.bbox_height_px = NAN;
+	const uint16_t bbox_width_px = read_be_u16(frame, 40);
+	const uint16_t bbox_height_px = read_be_u16(frame, 42);
+	const bool bbox_valid = lock_reported && bbox_width_px > 0 && bbox_height_px > 0
+				&& image_width_px > 0 && image_height_px > 0
+				&& bbox_width_px <= static_cast<uint32_t>(image_width_px)
+				&& bbox_height_px <= static_cast<uint32_t>(image_height_px);
+	target.bbox_width_px = bbox_valid ? static_cast<float>(bbox_width_px) : NAN;
+	target.bbox_height_px = bbox_valid ? static_cast<float>(bbox_height_px) : NAN;
 	target.frame_dt_s = _last_servo_time > 0 ? (now - _last_servo_time) * 1e-6f : 0.f;
 	target.last_rx_age_s = 0.f;
 
@@ -681,10 +687,11 @@ void DytGimbal::maybe_log_target(const dyt_target_s &target, uint8_t raw_trackin
 	}
 
 	_last_target_log_time = target.timestamp;
-	PX4_INFO("DYT V2 state=%u raw=0x%02x valid=%u los=(%.3f,%.3f) deg gimbal=(%.2f,%.2f,%.2f) deg dt=%.3f",
+	PX4_INFO("DYT V2 state=%u raw=0x%02x valid=%u los=(%.3f,%.3f) deg bbox=(%.0f,%.0f) px gimbal=(%.2f,%.2f,%.2f) deg dt=%.3f",
 		 static_cast<unsigned>(target.tracking_state), static_cast<unsigned>(raw_tracking_state),
 		 static_cast<unsigned>(target.target_valid), static_cast<double>(math::degrees(target.los_x_rad)),
-		 static_cast<double>(math::degrees(target.los_y_rad)), static_cast<double>(math::degrees(target.gimbal_roll_rad)),
+		 static_cast<double>(math::degrees(target.los_y_rad)), static_cast<double>(target.bbox_width_px),
+		 static_cast<double>(target.bbox_height_px), static_cast<double>(math::degrees(target.gimbal_roll_rad)),
 		 static_cast<double>(math::degrees(target.gimbal_pitch_frame_rad)),
 		 static_cast<double>(math::degrees(target.gimbal_yaw_rad)), static_cast<double>(target.frame_dt_s));
 }
@@ -866,7 +873,8 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 		const bool mode_sent = send_mode_once();
 
 		if (mode_sent && _mode_control == MODE_TRACK) {
-			_tracking_mode_guard_until = hrt_absolute_time() + TRACKING_MODE_GUARD;
+			const int32_t lock_hold_ms = math::constrain(_param_dyt_lock_hold_ms.get(), int32_t{100}, int32_t{10000});
+			_tracking_mode_guard_until = hrt_absolute_time() + static_cast<hrt_abstime>(lock_hold_ms) * 1000ULL;
 		}
 	}
 }

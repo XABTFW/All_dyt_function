@@ -47,8 +47,8 @@ float32 gimbal_roll_rate_rad_s
 float32 gimbal_pitch_rate_rad_s
 float32 gimbal_yaw_rate_rad_s
 
-float32 bbox_width_px
-float32 bbox_height_px
+float32 bbox_width_px  # target box width, servo-status protocol bytes 40-41 (big-endian)
+float32 bbox_height_px # target box height, servo-status protocol bytes 42-43 (big-endian)
 float32 range_m
 float32 zoom_ratio
 

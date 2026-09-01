@@ -23,6 +23,7 @@
 #include <uORB/topics/dyt_command.h>
 #include <uORB/topics/dyt_guidance_command.h>
 #include <uORB/topics/dyt_guidance_status.h>
+#include <uORB/topics/dyt_midcourse_log.h>
 #include <uORB/topics/dyt_target.h>
 #include <uORB/topics/follower_info.h>
 #include <uORB/topics/gripper.h>
@@ -72,10 +73,6 @@ private:
 	static constexpr float TARGET_MAX_LOS_RAD{0.45f};
 	static constexpr float TARGET_MAX_HINT_LOS_RAD{0.35f};
 	static constexpr float TARGET_MAX_GIMBAL_YAW_RAD{1.92f};
-	static constexpr float FRAME_YAW_MIN_DEG{-110.f};
-	static constexpr float FRAME_YAW_MAX_DEG{110.f};
-	static constexpr float FRAME_PITCH_MIN_DEG{-100.f};
-	static constexpr float FRAME_PITCH_MAX_DEG{70.f};
 	static constexpr float MIDCOURSE_RESEND_ANGLE_DELTA_DEG{0.5f};
 	static constexpr int MIDCOURSE_BURST_COUNT{3};
 	static constexpr hrt_abstime MIDCOURSE_BURST_INTERVAL{40_ms};
@@ -85,6 +82,30 @@ private:
 	static constexpr int SEARCH_CENTER_PASSES{2};
 	static constexpr hrt_abstime MANUAL_TAKEOVER_GRACE{500_ms};
 	static constexpr hrt_abstime TRACK_HANDOFF_SETPOINT_MAX_AGE{300_ms};
+	static constexpr float IMAGE_WIDTH_PX{1920.f};
+	static constexpr float IMAGE_HEIGHT_PX{1080.f};
+	static constexpr float IMAGE_AREA_DISTANCE_SCALE{1.5520f};
+	static constexpr float IMAGE_AREA_DISTANCE_OFFSET{0.5923f};
+	static constexpr float IMAGE_LONG_DISTANCE_SCALE{1.2075f};
+	static constexpr float IMAGE_LONG_DISTANCE_OFFSET{0.6356f};
+	static constexpr float IMAGE_DISTANCE_MIN_M{1.f};
+	static constexpr float IMAGE_DISTANCE_MAX_M{12.f};
+	static constexpr float IMAGE_ZOOM_TOLERANCE{0.05f};
+	static constexpr float IMAGE_CLOSING_SPEED_MAX_M_S{30.f};
+	static constexpr float NET_CAPTURE_DISTANCE_DEFAULT_M{1.6f};
+	static constexpr float NET_CAPTURE_LOOKAHEAD_S{0.3f};
+	static constexpr int IMAGE_SPEED_HISTORY_LEN{64};
+	static constexpr int IMAGE_SPEED_MIN_SAMPLES{5};
+	static constexpr hrt_abstime IMAGE_SPEED_WINDOW{600_ms};
+	static constexpr hrt_abstime IMAGE_SPEED_MIN_SPAN{450_ms};
+	static constexpr hrt_abstime IMAGE_SPEED_MAX_GAP{600_ms};
+	static constexpr hrt_abstime IMAGE_SPEED_MAX_AGE{500_ms};
+	static constexpr hrt_abstime FUSION_LASER_MAX_AGE{200_ms};
+	static constexpr float FUSION_BIAS_ALPHA{0.15f};
+	static constexpr float FUSION_INITIAL_DISTANCE_GATE_M{3.f};
+	static constexpr float FUSION_TRACK_DISTANCE_GATE_M{1.5f};
+	static constexpr float FUSION_SPEED_GATE_M_S{5.f};
+	static constexpr hrt_abstime NET_RELEASE_PWM_DELAY{250_ms};
 
 	struct ScanArea {
 		float yaw_min_deg{0.f};
@@ -97,6 +118,11 @@ private:
 		hrt_abstime sample_time{0};
 		Vector3f los_body{};
 		float frame_dt_s{0.f};
+	};
+
+	struct ImageRangeSample {
+		hrt_abstime timestamp{0};
+		float distance_m{NAN};
 	};
 
 	struct TrackProfile {
@@ -177,6 +203,15 @@ private:
 	bool target_usable() const;
 	bool intercept_allowed() const;
 	void update_net_release_trigger(hrt_abstime now);
+	float target_bbox_area_percent() const;
+	bool update_image_net_estimate(hrt_abstime now);
+	bool update_fused_net_estimate(hrt_abstime now);
+	void reset_image_net_estimate();
+	void reset_range_fusion();
+	void clear_image_speed_history();
+	void push_image_speed_sample(hrt_abstime timestamp, float distance_m);
+	bool estimate_image_closing_speed(float &closing_speed_m_s) const;
+	bool build_net_release_los_ned(Vector3f &los_ned) const;
 	Vector3f net_release_pitch_accel_ned() const;
 	bool update_laser_distance(hrt_abstime now);
 	void send_net_release_command(hrt_abstime now);
@@ -215,6 +250,8 @@ private:
 	bool compute_midcourse_inertial_angles(const Vector3f &los_ned, float &yaw_deg, float &pitch_deg) const;
 	Vector3f rotate_mount_los_to_body(const Vector3f &los_mount) const;
 	float finite_param_deg(float value) const;
+	void frame_angle_limits(float &yaw_min_deg, float &yaw_max_deg, float &pitch_min_deg,
+				float &pitch_max_deg) const;
 	bool update_midcourse_pointing(hrt_abstime now, bool force = false);
 	bool update_midcourse_geo_tracking(hrt_abstime now, bool force = false);
 	bool update_midcourse_gimbal_pointing(hrt_abstime now, bool force = false);
@@ -263,11 +300,25 @@ private:
 	hrt_abstime _auto_lock_last_sample_time{0};
 	hrt_abstime _last_laser_sample_time{0};
 	hrt_abstime _net_release_pitch_until{0};
+	hrt_abstime _net_release_fire_at{0};
+	hrt_abstime _image_last_sample_time{0};
+	hrt_abstime _image_speed_last_sample_time{0};
+	hrt_abstime _image_speed_timestamp{0};
+	hrt_abstime _last_fusion_laser_sample_time{0};
 	hrt_abstime _net_hold_start_time{0};
 	hrt_abstime _net_decel_until{0};
 	bool _candidate_lock_active{false};
 	bool _net_release_sent{false};
 	bool _net_release_pitch_pending{false};
+	bool _net_hold_pending{false};
+	bool _image_range_valid{false};
+	bool _image_closing_speed_valid{false};
+	bool _fused_range_valid{false};
+	bool _fused_closing_speed_valid{false};
+	bool _laser_fusion_used{false};
+	bool _fusion_distance_bias_valid{false};
+	bool _fusion_speed_bias_valid{false};
+	uint8_t _fusion_initial_laser_count{0};
 	bool _prev_manual_fire_request{false};
 	bool _net_hold_active{false};
 	bool _net_brake_active{false};
@@ -284,6 +335,22 @@ private:
 	float _scan_yaw_deg{0.f};
 	float _scan_pitch_deg{0.f};
 	float _laser_distance_m{NAN};
+	float _bbox_area_ratio{NAN};
+	float _image_distance_area_m{NAN};
+	float _image_distance_long_m{NAN};
+	float _image_distance_disagreement_m{NAN};
+	float _image_closing_speed_m_s{NAN};
+	float _image_trigger_distance_m{NAN};
+	float _fused_distance_m{NAN};
+	float _fused_closing_speed_m_s{NAN};
+	float _fusion_distance_bias_m{NAN};
+	float _fusion_speed_bias_m_s{NAN};
+	float _fusion_initial_distance_bias_m{NAN};
+	float _fusion_laser_distance_m{NAN};
+	float _fusion_laser_closing_speed_m_s{NAN};
+	ImageRangeSample _image_speed_history[IMAGE_SPEED_HISTORY_LEN]{};
+	uint8_t _image_speed_history_count{0};
+	uint8_t _image_speed_history_next{0};
 	sdm50_status_s _sdm50_status{};
 	float _net_decel_initial_speed{0.f};
 	float _net_decel_target_speed{0.f};
@@ -294,7 +361,12 @@ private:
 	hrt_abstime _track_handoff_time{0};
 	float _midcourse_yaw_deg{NAN};
 	float _midcourse_pitch_deg{NAN};
+	float _midcourse_command_yaw_unconstrained_deg{NAN};
+	float _midcourse_command_pitch_unconstrained_deg{NAN};
+	float _midcourse_command_yaw_deg{NAN};
+	float _midcourse_command_pitch_deg{NAN};
 	int _midcourse_burst_remaining{0};
+	bool _midcourse_command_valid{false};
 	bool _midcourse_geotrack_active{false};
 	bool _track_handoff_velocity_valid{false};
 
@@ -374,6 +446,7 @@ private:
 	uORB::Publication<vehicle_command_s> _vehicle_command_pub{ORB_ID(vehicle_command)};
 	uORB::Publication<dyt_command_s> _dyt_command_pub{ORB_ID(dyt_command)};
 	uORB::Publication<dyt_guidance_status_s> _dyt_guidance_status_pub{ORB_ID(dyt_guidance_status)};
+	uORB::Publication<dyt_midcourse_log_s> _dyt_midcourse_log_pub{ORB_ID(dyt_midcourse_log)};
 
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::DYT_VEH_TYPE>) _param_vehicle_type,
@@ -394,6 +467,7 @@ private:
 		(ParamInt<px4::params::DYTG_AUTO_EN>) _param_auto_enable,
 		(ParamInt<px4::params::DYTG_AUTO_N>) _param_auto_frames,
 		(ParamInt<px4::params::DYTG_LOCK_N>) _param_lock_frames,
+		(ParamInt<px4::params::DYTG_LOCK_MS>) _param_lock_hold_ms,
 		(ParamInt<px4::params::DYTG_RELOCKN>) _param_relock_frames,
 		(ParamInt<px4::params::DYTG_WAITMS>) _param_wait_ms,
 		(ParamInt<px4::params::DYTG_LOSTMS>) _param_lost_ms,
@@ -426,10 +500,11 @@ private:
 		(ParamInt<px4::params::DYTG_SZ_MS>) _param_net_release_pitch_ms,
 		(ParamFloat<px4::params::DYTG_ALP_K>) _param_alpha_gain,
 		(ParamFloat<px4::params::DYTG_ALP_MAX>) _param_alpha_max_deg,
-		(ParamFloat<px4::params::DYTG_ALP_VMIN>) _param_alpha_min_speed,
 		(ParamInt<px4::params::DYTG_FIRE_AUX>) _param_manual_fire_aux,
 		(ParamInt<px4::params::DYTG_FIRE_BTN>) _param_manual_fire_btn,
 		(ParamInt<px4::params::DYTG_FIRE_EN>) _param_net_release_enable,
+		(ParamInt<px4::params::DYTG_FUS_EN>) _param_range_fusion_enable,
+		(ParamFloat<px4::params::DYTG_FIRE_D>) _param_net_capture_distance,
 		(ParamInt<px4::params::DYTG_HOLD_EN>) _param_net_hold_enable,
 		(ParamFloat<px4::params::DYTG_STOP_D>) _param_net_stop_distance,
 		(ParamFloat<px4::params::DYTG_STOP_V>) _param_net_stop_speed,
@@ -467,6 +542,10 @@ private:
 		(ParamFloat<px4::params::DYTG_ROFF>) _param_roll_off_deg,
 		(ParamFloat<px4::params::DYTG_POFF>) _param_pitch_off_deg,
 		(ParamFloat<px4::params::DYTG_YOFF>) _param_yaw_off_deg,
+		(ParamFloat<px4::params::DYTG_YAW_MIN>) _param_frame_yaw_min_deg,
+		(ParamFloat<px4::params::DYTG_YAW_MAX>) _param_frame_yaw_max_deg,
+		(ParamFloat<px4::params::DYTG_PIT_MIN>) _param_frame_pitch_min_deg,
+		(ParamFloat<px4::params::DYTG_PIT_MAX>) _param_frame_pitch_max_deg,
 		(ParamInt<px4::params::DYTG_MNT_EN>) _param_mount_enable,
 		(ParamFloat<px4::params::DYTG_MNT_R>) _param_mount_roll_deg,
 		(ParamFloat<px4::params::DYTG_MNT_P>) _param_mount_pitch_deg,
@@ -497,7 +576,15 @@ int DytGuidance::print_status()
 
 void DytGuidance::show_status()
 {
+	float yaw_min_deg = NAN;
+	float yaw_max_deg = NAN;
+	float pitch_min_deg = NAN;
+	float pitch_max_deg = NAN;
+	frame_angle_limits(yaw_min_deg, yaw_max_deg, pitch_min_deg, pitch_max_deg);
 	PX4_INFO("state: %u", static_cast<unsigned>(_state));
+	PX4_INFO("gimbal limits: yaw=[%.1f, %.1f] deg pitch=[%.1f, %.1f] deg",
+		 static_cast<double>(yaw_min_deg), static_cast<double>(yaw_max_deg),
+		 static_cast<double>(pitch_min_deg), static_cast<double>(pitch_max_deg));
 	PX4_INFO("handoff: coop_en=%ld geo_en=%ld active=%d controlling_vehicle=%d",
 		 static_cast<long>(_param_coop_enable.get()),
 		 static_cast<long>(_param_midcourse_geo_enable.get()), midcourse_handoff_active(), vehicle_control_active());
@@ -561,14 +648,30 @@ void DytGuidance::show_status()
 		 _net_decel_until > hrt_absolute_time(),
 		 static_cast<double>(_net_decel_initial_speed),
 		 static_cast<double>(_net_decel_target_speed));
-	PX4_INFO("net fire: en=%ld range=%.2f m closing=%.2f m/s window=[%.2f, %.2f] m fresh=%d sent=%d",
+	PX4_INFO("net image: en=%ld bbox=(%.0f,%.0f) px area=%.2f%% long_d=%.2f m area_d=%.2f m diff=%.2f m valid=%d",
 		 static_cast<long>(_param_net_release_enable.get()),
-		 static_cast<double>(_laser_distance_m),
-		 static_cast<double>(_sdm50_status.closing_speed_m_s),
-		 static_cast<double>(_param_net_range_min.get()),
-		 static_cast<double>(_param_net_range_max.get()),
-		 _last_laser_sample_time > 0 && hrt_elapsed_time(&_last_laser_sample_time) <= 200_ms,
+		 static_cast<double>(_last_target.bbox_width_px),
+		 static_cast<double>(_last_target.bbox_height_px),
+		 static_cast<double>(target_bbox_area_percent()),
+		 static_cast<double>(_image_distance_long_m),
+		 static_cast<double>(_image_distance_area_m),
+		 static_cast<double>(_image_distance_disagreement_m),
+		 _image_range_valid);
+	PX4_INFO("net fire: closing=%.2f m/s start_d=%.2f m speed_valid=%d attitude=%d pwm_pending=%d sent=%d",
+		 static_cast<double>(_image_closing_speed_m_s),
+		 static_cast<double>(_image_trigger_distance_m),
+		 _image_closing_speed_valid,
+		 _net_release_pitch_until > hrt_absolute_time(),
+		 _net_release_pitch_pending,
 		 _net_release_sent);
+	PX4_INFO("net fusion: laser=(%.2f m, %.2f m/s) fused=(%.2f m, %.2f m/s) bias=(%.2f m, %.2f m/s) used=%d valid=%d",
+		 static_cast<double>(_fusion_laser_distance_m),
+		 static_cast<double>(_fusion_laser_closing_speed_m_s),
+		 static_cast<double>(_fused_distance_m),
+		 static_cast<double>(_fused_closing_speed_m_s),
+		 static_cast<double>(_fusion_distance_bias_m),
+		 static_cast<double>(_fusion_speed_bias_m_s),
+		 _laser_fusion_used, _fused_range_valid && _fused_closing_speed_valid);
 	PX4_INFO("manual fire: aux=%ld value=%.2f btn=%ld request=%d",
 		 static_cast<long>(_param_manual_fire_aux.get()),
 		 static_cast<double>(aux_value(_param_manual_fire_aux.get())),
@@ -1172,23 +1275,34 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 	const bool manual_fire_rising = manual_fire_request && !_prev_manual_fire_request;
 	_prev_manual_fire_request = manual_fire_request;
 
-	if (!target_usable()) {
-		clear_net_release_trigger();
-		return;
-	}
-
 	if (_net_release_pitch_until != 0) {
+		if (!target_usable() && !_net_release_sent) {
+			clear_net_release_trigger();
+			return;
+		}
+
+		if (_net_release_pitch_pending && now >= _net_release_fire_at && !_net_release_sent) {
+			send_net_release_command(now);
+			_net_release_sent = true;
+			_net_release_pitch_pending = false;
+		}
+
 		if (now >= _net_release_pitch_until) {
-			const bool release_pending = _net_release_pitch_pending;
 			_net_release_pitch_until = 0;
+			_net_release_fire_at = 0;
 			_net_release_pitch_pending = false;
 
-			if (release_pending && !_net_release_sent) {
-				send_net_release_command(now);
-				_net_release_sent = true;
+			if (_net_release_sent) {
+				_net_hold_pending = false;
+				start_net_hold_after_release();
 			}
 		}
 
+		return;
+	}
+
+	if (!target_usable()) {
+		clear_net_release_trigger();
 		return;
 	}
 
@@ -1200,7 +1314,9 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 	auto start_pitch_then_release = [this, now, pitch_duration_ms]() {
 		if (pitch_duration_ms > 0) {
 			_net_release_pitch_until = now + static_cast<hrt_abstime>(pitch_duration_ms) * 1000ULL;
+			_net_release_fire_at = math::min(now + NET_RELEASE_PWM_DELAY, _net_release_pitch_until);
 			_net_release_pitch_pending = true;
+			_net_hold_pending = false;
 
 		} else {
 			send_net_release_command(now);
@@ -1213,53 +1329,424 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 		return;
 	}
 
-	const float range_min = _param_net_range_min.get();
-	const float range_max = _param_net_range_max.get();
-	const bool range_window_valid = PX4_ISFINITE(range_min) && PX4_ISFINITE(range_max)
-					&& range_min >= 0.05f && range_max > range_min;
+	// Keep the estimator and its uORB/status feedback alive while automatic release is disabled.
+	// This allows the fixed-camera calibration to be checked safely without sending a PWM command.
+	const bool fusion_trigger_ready = update_image_net_estimate(now);
 
-	if (_param_net_release_enable.get() <= 0 || !range_window_valid || !update_laser_distance(now)) {
+	if (_param_net_release_enable.get() <= 0 || !fusion_trigger_ready) {
 		return;
 	}
 
-	if (_laser_distance_m >= range_min && _laser_distance_m <= range_max) {
+	if (_fused_distance_m <= _image_trigger_distance_m) {
 		start_pitch_then_release();
 	}
 }
 
-Vector3f DytGuidance::net_release_pitch_accel_ned() const
+float DytGuidance::target_bbox_area_percent() const
 {
-	if (_net_release_pitch_until == 0 || !_vehicle_local_position.v_xy_valid || !_vehicle_local_position.v_z_valid
-	    || _vehicle_local_position.timestamp == 0 || hrt_elapsed_time(&_vehicle_local_position.timestamp) > 200_ms
-	    || _vehicle_attitude.timestamp == 0 || hrt_elapsed_time(&_vehicle_attitude.timestamp) > 200_ms) {
-		return Vector3f{};
+	if (!_have_target || !PX4_ISFINITE(_last_target.bbox_width_px)
+	    || !PX4_ISFINITE(_last_target.bbox_height_px)
+	    || _last_target.bbox_width_px < TARGET_MIN_BBOX_PX
+	    || _last_target.bbox_height_px < TARGET_MIN_BBOX_PX) {
+		return NAN;
 	}
 
-	const Vector3f velocity(_vehicle_local_position.vx, _vehicle_local_position.vy, _vehicle_local_position.vz);
+	if (_last_target.bbox_width_px > IMAGE_WIDTH_PX || _last_target.bbox_height_px > IMAGE_HEIGHT_PX) {
+		return NAN;
+	}
+
+	return 100.f * _last_target.bbox_width_px * _last_target.bbox_height_px / (IMAGE_WIDTH_PX * IMAGE_HEIGHT_PX);
+}
+
+void DytGuidance::clear_image_speed_history()
+{
+	_image_speed_history_count = 0;
+	_image_speed_history_next = 0;
+	_image_speed_last_sample_time = 0;
+}
+
+void DytGuidance::push_image_speed_sample(hrt_abstime timestamp, float distance_m)
+{
+	_image_speed_history[_image_speed_history_next] = {timestamp, distance_m};
+	_image_speed_history_next = (_image_speed_history_next + 1) % IMAGE_SPEED_HISTORY_LEN;
+	_image_speed_history_count = math::min(static_cast<int>(_image_speed_history_count) + 1,
+					       IMAGE_SPEED_HISTORY_LEN);
+}
+
+bool DytGuidance::estimate_image_closing_speed(float &closing_speed_m_s) const
+{
+	if (_image_speed_history_count < IMAGE_SPEED_MIN_SAMPLES) {
+		return false;
+	}
+
+	const int latest_index = (_image_speed_history_next + IMAGE_SPEED_HISTORY_LEN - 1) % IMAGE_SPEED_HISTORY_LEN;
+	const hrt_abstime latest_time = _image_speed_history[latest_index].timestamp;
+	hrt_abstime earliest_time = latest_time;
+	float sum_t = 0.f;
+	float sum_distance = 0.f;
+	float sum_t_squared = 0.f;
+	float sum_t_distance = 0.f;
+	int sample_count = 0;
+
+	for (int i = 0; i < _image_speed_history_count; ++i) {
+		const int index = (_image_speed_history_next + IMAGE_SPEED_HISTORY_LEN - _image_speed_history_count + i)
+				  % IMAGE_SPEED_HISTORY_LEN;
+		const ImageRangeSample &sample = _image_speed_history[index];
+
+		if (sample.timestamp == 0 || sample.timestamp > latest_time
+		    || latest_time - sample.timestamp > IMAGE_SPEED_WINDOW || !PX4_ISFINITE(sample.distance_m)) {
+			continue;
+		}
+
+		const float time_s = -static_cast<float>(latest_time - sample.timestamp) * 1e-6f;
+		earliest_time = sample.timestamp < earliest_time ? sample.timestamp : earliest_time;
+		sum_t += time_s;
+		sum_distance += sample.distance_m;
+		sum_t_squared += time_s * time_s;
+		sum_t_distance += time_s * sample.distance_m;
+		++sample_count;
+	}
+
+	if (sample_count < IMAGE_SPEED_MIN_SAMPLES || latest_time - earliest_time < IMAGE_SPEED_MIN_SPAN) {
+		return false;
+	}
+
+	const float denominator = sample_count * sum_t_squared - sum_t * sum_t;
+
+	if (!PX4_ISFINITE(denominator) || denominator < 1e-6f) {
+		return false;
+	}
+
+	const float distance_rate_m_s = (sample_count * sum_t_distance - sum_t * sum_distance) / denominator;
+	closing_speed_m_s = -distance_rate_m_s;
+	return PX4_ISFINITE(closing_speed_m_s);
+}
+
+bool DytGuidance::update_image_net_estimate(hrt_abstime now)
+{
+	if (!_have_target || _last_target.timestamp_sample == 0 || _last_target.timestamp_sample > now) {
+		reset_image_net_estimate();
+		return false;
+	}
+
+	if (_image_closing_speed_valid && (_image_speed_timestamp == 0 || now - _image_speed_timestamp > IMAGE_SPEED_MAX_AGE)) {
+		_image_closing_speed_valid = false;
+		_image_closing_speed_m_s = NAN;
+		_image_trigger_distance_m = NAN;
+		_fused_closing_speed_valid = false;
+		_fused_closing_speed_m_s = NAN;
+	}
+
+	if (_last_target.timestamp_sample == _image_last_sample_time) {
+		return _fused_range_valid && _fused_closing_speed_valid;
+	}
+
+	_image_last_sample_time = _last_target.timestamp_sample;
+	_image_range_valid = false;
+	_bbox_area_ratio = NAN;
+	_image_distance_area_m = NAN;
+	_image_distance_long_m = NAN;
+	_image_distance_disagreement_m = NAN;
+
+	const bool visible_source = _last_target.video_source == dyt_target_s::VIDEO_SOURCE_VIS_1
+				    || _last_target.video_source == dyt_target_s::VIDEO_SOURCE_VIS_2;
+	const bool zoom_valid = PX4_ISFINITE(_last_target.zoom_ratio)
+				&& fabsf(_last_target.zoom_ratio - 1.f) <= IMAGE_ZOOM_TOLERANCE;
+	const float bbox_width_px = _last_target.bbox_width_px;
+	const float bbox_height_px = _last_target.bbox_height_px;
+
+	if (!visible_source || !zoom_valid || !PX4_ISFINITE(bbox_width_px) || !PX4_ISFINITE(bbox_height_px)
+	    || bbox_width_px < TARGET_MIN_BBOX_PX || bbox_height_px < TARGET_MIN_BBOX_PX
+	    || bbox_width_px > IMAGE_WIDTH_PX || bbox_height_px > IMAGE_HEIGHT_PX) {
+		clear_image_speed_history();
+		reset_range_fusion();
+		_image_speed_timestamp = 0;
+		_image_closing_speed_valid = false;
+		_image_closing_speed_m_s = NAN;
+		_image_trigger_distance_m = NAN;
+		return false;
+	}
+
+	_bbox_area_ratio = bbox_width_px * bbox_height_px / (IMAGE_WIDTH_PX * IMAGE_HEIGHT_PX);
+	const float long_ratio = math::max(bbox_width_px, bbox_height_px) / IMAGE_WIDTH_PX;
+
+	if (!PX4_ISFINITE(_bbox_area_ratio) || !PX4_ISFINITE(long_ratio)
+	    || _bbox_area_ratio <= 0.f || _bbox_area_ratio > 1.f || long_ratio <= 0.f || long_ratio > 1.f) {
+		reset_image_net_estimate();
+		return false;
+	}
+
+	_image_distance_area_m = IMAGE_AREA_DISTANCE_SCALE / sqrtf(_bbox_area_ratio) - IMAGE_AREA_DISTANCE_OFFSET;
+	_image_distance_long_m = IMAGE_LONG_DISTANCE_SCALE / long_ratio - IMAGE_LONG_DISTANCE_OFFSET;
+	_image_distance_disagreement_m = fabsf(_image_distance_area_m - _image_distance_long_m);
+	// The requested net-capture range is the long-side fit. The area fit and the
+	// difference remain diagnostic only and never inhibit or initiate release.
+	_image_range_valid = PX4_ISFINITE(_image_distance_long_m)
+			     && _image_distance_long_m >= IMAGE_DISTANCE_MIN_M
+			     && _image_distance_long_m <= IMAGE_DISTANCE_MAX_M;
+
+	if (!_image_range_valid) {
+		clear_image_speed_history();
+		reset_range_fusion();
+		_image_speed_timestamp = 0;
+		_image_closing_speed_valid = false;
+		_image_closing_speed_m_s = NAN;
+		_image_trigger_distance_m = NAN;
+		return false;
+	}
+
+	if (_image_speed_last_sample_time != 0
+	    && (_last_target.timestamp_sample <= _image_speed_last_sample_time
+		|| _last_target.timestamp_sample - _image_speed_last_sample_time > IMAGE_SPEED_MAX_GAP)) {
+		clear_image_speed_history();
+	}
+
+	push_image_speed_sample(_last_target.timestamp_sample, _image_distance_long_m);
+	_image_speed_last_sample_time = _last_target.timestamp_sample;
+	float closing_speed_m_s = NAN;
+	_image_closing_speed_valid = estimate_image_closing_speed(closing_speed_m_s)
+				     && closing_speed_m_s >= 0.f && closing_speed_m_s <= IMAGE_CLOSING_SPEED_MAX_M_S;
+	_image_closing_speed_m_s = _image_closing_speed_valid ? closing_speed_m_s : NAN;
+	_image_speed_timestamp = _image_closing_speed_valid ? _last_target.timestamp_sample : 0;
+
+	return update_fused_net_estimate(now);
+}
+
+bool DytGuidance::update_fused_net_estimate(hrt_abstime now)
+{
+	_fused_range_valid = false;
+	_fused_closing_speed_valid = false;
+	_laser_fusion_used = false;
+	_fused_distance_m = NAN;
+	_fused_closing_speed_m_s = NAN;
+	_fusion_laser_distance_m = NAN;
+	_fusion_laser_closing_speed_m_s = NAN;
+
+	if (!_image_range_valid || !_image_closing_speed_valid) {
+		_fused_distance_m = NAN;
+		_fused_closing_speed_m_s = NAN;
+		_image_trigger_distance_m = NAN;
+		return false;
+	}
+
+	if (_param_range_fusion_enable.get() <= 0) {
+		reset_range_fusion();
+		_fused_distance_m = _image_distance_long_m;
+		_fused_closing_speed_m_s = _image_closing_speed_m_s;
+		_fused_range_valid = true;
+		_fused_closing_speed_valid = true;
+	}
+
+	const bool laser_fresh = _param_range_fusion_enable.get() > 0
+				 && _sdm50_status.valid && _sdm50_status.timestamp_sample != 0
+				 && _sdm50_status.timestamp_sample <= now
+				 && now - _sdm50_status.timestamp_sample <= FUSION_LASER_MAX_AGE;
+	const bool laser_distance_valid = laser_fresh && PX4_ISFINITE(_sdm50_status.distance_m)
+					  && _sdm50_status.distance_m >= 0.05f && _sdm50_status.distance_m <= 50.f;
+	const bool new_laser_sample = laser_distance_valid
+				      && _sdm50_status.timestamp_sample != _last_fusion_laser_sample_time;
+
+	if (laser_distance_valid) {
+		_fusion_laser_distance_m = _sdm50_status.distance_m;
+		const float raw_bias_m = _image_distance_long_m - _fusion_laser_distance_m;
+
+		if (!_fusion_distance_bias_valid && new_laser_sample && PX4_ISFINITE(raw_bias_m)
+		    && fabsf(raw_bias_m) <= FUSION_INITIAL_DISTANCE_GATE_M) {
+			if (_fusion_initial_laser_count == 0
+			    || fabsf(raw_bias_m - _fusion_initial_distance_bias_m) > FUSION_TRACK_DISTANCE_GATE_M) {
+				_fusion_initial_distance_bias_m = raw_bias_m;
+				_fusion_initial_laser_count = 1;
+
+			} else {
+				_fusion_initial_distance_bias_m = 0.5f * (_fusion_initial_distance_bias_m + raw_bias_m);
+				++_fusion_initial_laser_count;
+
+				if (_fusion_initial_laser_count >= 2) {
+					_fusion_distance_bias_m = _fusion_initial_distance_bias_m;
+					_fusion_distance_bias_valid = true;
+				}
+			}
+
+		} else if (!_fusion_distance_bias_valid && new_laser_sample) {
+			_fusion_initial_laser_count = 0;
+			_fusion_initial_distance_bias_m = NAN;
+		}
+
+		const float corrected_image_m = _fusion_distance_bias_valid ?
+						_image_distance_long_m - _fusion_distance_bias_m : _image_distance_long_m;
+
+		if (_fusion_distance_bias_valid
+		    && fabsf(corrected_image_m - _fusion_laser_distance_m) <= FUSION_TRACK_DISTANCE_GATE_M) {
+			if (new_laser_sample) {
+				_fusion_distance_bias_m += FUSION_BIAS_ALPHA * (raw_bias_m - _fusion_distance_bias_m);
+			}
+
+			_fused_distance_m = _fusion_laser_distance_m;
+			_laser_fusion_used = true;
+		}
+	}
+
+	if (!_laser_fusion_used) {
+		_fused_distance_m = _fusion_distance_bias_valid ?
+				    _image_distance_long_m - _fusion_distance_bias_m : _image_distance_long_m;
+	}
+
+	const bool laser_speed_valid = _laser_fusion_used && PX4_ISFINITE(_sdm50_status.closing_speed_m_s)
+				       && _sdm50_status.closing_speed_m_s >= 0.f
+				       && _sdm50_status.closing_speed_m_s <= IMAGE_CLOSING_SPEED_MAX_M_S;
+
+	if (laser_speed_valid) {
+		_fusion_laser_closing_speed_m_s = _sdm50_status.closing_speed_m_s;
+		const float raw_speed_bias_m_s = _image_closing_speed_m_s - _fusion_laser_closing_speed_m_s;
+		const float corrected_image_speed_m_s = _fusion_speed_bias_valid ?
+							 _image_closing_speed_m_s - _fusion_speed_bias_m_s :
+							 _image_closing_speed_m_s;
+
+		if (PX4_ISFINITE(raw_speed_bias_m_s)
+		    && fabsf(corrected_image_speed_m_s - _fusion_laser_closing_speed_m_s) <= FUSION_SPEED_GATE_M_S) {
+			if (new_laser_sample && _fusion_speed_bias_valid) {
+				_fusion_speed_bias_m_s += FUSION_BIAS_ALPHA * (raw_speed_bias_m_s - _fusion_speed_bias_m_s);
+
+			} else if (!_fusion_speed_bias_valid) {
+				_fusion_speed_bias_m_s = raw_speed_bias_m_s;
+				_fusion_speed_bias_valid = true;
+			}
+
+			_fused_closing_speed_m_s = _fusion_laser_closing_speed_m_s;
+		}
+	}
+
+	if (new_laser_sample) {
+		_last_fusion_laser_sample_time = _sdm50_status.timestamp_sample;
+	}
+
+	if (!PX4_ISFINITE(_fused_closing_speed_m_s)) {
+		_fused_closing_speed_m_s = _fusion_speed_bias_valid ?
+						 _image_closing_speed_m_s - _fusion_speed_bias_m_s : _image_closing_speed_m_s;
+	}
+
+	_fused_range_valid = PX4_ISFINITE(_fused_distance_m) && _fused_distance_m >= 0.05f
+			     && _fused_distance_m <= 50.f;
+	_fused_closing_speed_valid = PX4_ISFINITE(_fused_closing_speed_m_s)
+				      && _fused_closing_speed_m_s >= 0.f
+				      && _fused_closing_speed_m_s <= IMAGE_CLOSING_SPEED_MAX_M_S;
+
+	if (_fused_range_valid && _fused_closing_speed_valid) {
+		const float configured_distance_m = _param_net_capture_distance.get();
+		const float capture_distance_m = PX4_ISFINITE(configured_distance_m)
+					 ? math::constrain(configured_distance_m, 0.1f, 12.f)
+					 : NET_CAPTURE_DISTANCE_DEFAULT_M;
+		_image_trigger_distance_m = _fused_closing_speed_m_s * NET_CAPTURE_LOOKAHEAD_S + capture_distance_m;
+
+	} else {
+		_image_trigger_distance_m = NAN;
+	}
+
+	return _fused_range_valid && _fused_closing_speed_valid;
+}
+
+void DytGuidance::reset_image_net_estimate()
+{
+	_image_last_sample_time = 0;
+	clear_image_speed_history();
+	_image_speed_timestamp = 0;
+	_image_range_valid = false;
+	_image_closing_speed_valid = false;
+	_bbox_area_ratio = NAN;
+	_image_distance_area_m = NAN;
+	_image_distance_long_m = NAN;
+	_image_distance_disagreement_m = NAN;
+	_image_closing_speed_m_s = NAN;
+	_image_trigger_distance_m = NAN;
+	reset_range_fusion();
+}
+
+void DytGuidance::reset_range_fusion()
+{
+	_fused_range_valid = false;
+	_fused_closing_speed_valid = false;
+	_laser_fusion_used = false;
+	_fusion_distance_bias_valid = false;
+	_fusion_speed_bias_valid = false;
+	_fusion_initial_laser_count = 0;
+	_last_fusion_laser_sample_time = 0;
+	_fused_distance_m = NAN;
+	_fused_closing_speed_m_s = NAN;
+	_fusion_distance_bias_m = NAN;
+	_fusion_speed_bias_m_s = NAN;
+	_fusion_initial_distance_bias_m = NAN;
+	_fusion_laser_distance_m = NAN;
+	_fusion_laser_closing_speed_m_s = NAN;
+}
+
+bool DytGuidance::build_net_release_los_ned(Vector3f &los_ned) const
+{
+	if (!target_usable() || _vehicle_attitude.timestamp == 0
+	    || hrt_elapsed_time(&_vehicle_attitude.timestamp) > 200_ms) {
+		return false;
+	}
+
+	const float los_x = _last_target.los_x_rad * static_cast<float>(_param_los_x_sign.get());
+	const float los_y = _last_target.los_y_rad * static_cast<float>(_param_los_y_sign.get());
+	Vector3f los_gimbal(1.f, tanf(los_x), tanf(los_y));
+
+	if (!los_gimbal.isAllFinite() || los_gimbal.norm_squared() < 1e-6f) {
+		return false;
+	}
+
+	los_gimbal.normalize();
+	const float roll = _last_target.gimbal_roll_rad * static_cast<float>(_param_roll_sign.get())
+			   + math::radians(_param_roll_off_deg.get());
+	// Net-release alignment deliberately excludes DYTG_POFF and DYTG_YOFF.
+	const float pitch = _last_target.gimbal_pitch_frame_rad * static_cast<float>(_param_pitch_sign.get());
+	const float yaw = _last_target.gimbal_yaw_rad * static_cast<float>(_param_yaw_sign.get());
+	const Vector3f los_mount = Dcmf(Eulerf(roll, pitch, yaw)) * los_gimbal;
+	const Vector3f los_body = rotate_mount_los_to_body(los_mount);
 	const Quatf attitude_q(_vehicle_attitude.q);
 
-	if (!velocity.isAllFinite() || !attitude_q.isAllFinite()) {
+	if (!los_body.isAllFinite() || !attitude_q.isAllFinite() || los_body.norm_squared() < 1e-6f) {
+		return false;
+	}
+
+	los_ned = Dcmf(attitude_q) * los_body.normalized();
+
+	if (!los_ned.isAllFinite() || los_ned.norm_squared() < 1e-6f) {
+		return false;
+	}
+
+	los_ned.normalize();
+	return true;
+}
+
+Vector3f DytGuidance::net_release_pitch_accel_ned() const
+{
+	if (_net_release_pitch_until == 0 || _vehicle_attitude.timestamp == 0
+	    || hrt_elapsed_time(&_vehicle_attitude.timestamp) > 200_ms) {
 		return Vector3f{};
 	}
 
-	const float min_speed = math::constrain(_param_alpha_min_speed.get(), 0.1f, 10.f);
-	const float speed = velocity.norm();
+	const Quatf attitude_q(_vehicle_attitude.q);
+	Vector3f net_los_ned;
+
+	if (!attitude_q.isAllFinite() || !build_net_release_los_ned(net_los_ned)) {
+		return Vector3f{};
+	}
+
 	const Dcmf body_to_ned(attitude_q);
 	const Vector3f body_forward_ned = body_to_ned * Vector3f(1.f, 0.f, 0.f);
 	const Vector3f launch_axis_ned = body_to_ned * Vector3f(0.f, 0.f, -1.f);
 
-	if (!PX4_ISFINITE(speed) || speed < min_speed || !body_forward_ned.isAllFinite()
-	    || !launch_axis_ned.isAllFinite()) {
+	if (!body_forward_ned.isAllFinite() || !launch_axis_ned.isAllFinite()) {
 		return Vector3f{};
 	}
 
-	// NED +Z points down. Match the reference implementation by correcting the
-	// elevation difference between the velocity vector and the body -Z launch axis.
+	// NED +Z points down. Correct the elevation difference between the current
+	// target LOS and the body -Z launch axis using the original correction sign.
 	const float launch_horizontal = Vector2f(launch_axis_ned(0), launch_axis_ned(1)).norm();
-	const float velocity_horizontal = Vector2f(velocity(0), velocity(1)).norm();
+	const float los_horizontal = Vector2f(net_los_ned(0), net_los_ned(1)).norm();
 	const float launch_elevation = atan2f(-launch_axis_ned(2), launch_horizontal);
-	const float velocity_elevation = atan2f(-velocity(2), velocity_horizontal);
-	const float elevation_difference = velocity_elevation - launch_elevation;
+	const float los_elevation = atan2f(-net_los_ned(2), los_horizontal);
+	const float elevation_difference = los_elevation - launch_elevation;
 	const float gain = math::constrain(_param_alpha_gain.get(), -10.f, 10.f);
 	const float max_correction = math::radians(math::constrain(fabsf(_param_alpha_max_deg.get()), 0.f, 60.f));
 	const float correction_angle = math::constrain(gain * elevation_difference, -max_correction, max_correction);
@@ -1348,7 +1835,9 @@ void DytGuidance::clear_net_release_trigger()
 	_last_laser_sample_time = 0;
 	_laser_distance_m = NAN;
 	_net_release_pitch_until = 0;
+	_net_release_fire_at = 0;
 	_net_release_pitch_pending = false;
+	reset_image_net_estimate();
 }
 
 void DytGuidance::update_gripper_release_trigger(hrt_abstime now)
@@ -1387,10 +1876,16 @@ void DytGuidance::update_gripper_release_trigger(hrt_abstime now)
 
 void DytGuidance::start_net_hold_after_release()
 {
+	if (_net_release_pitch_until != 0 && hrt_absolute_time() < _net_release_pitch_until) {
+		_net_hold_pending = true;
+		return;
+	}
+
 	if (_param_net_hold_enable.get() <= 0 || !vehicle_control_active() || !preconditions_ok()) {
 		return;
 	}
 
+	_net_hold_pending = false;
 	_net_hold_active = true;
 	_net_brake_active = true;
 	_net_hold_start_time = hrt_absolute_time();
@@ -1399,6 +1894,7 @@ void DytGuidance::start_net_hold_after_release()
 
 void DytGuidance::clear_net_hold()
 {
+	_net_hold_pending = false;
 	_net_hold_active = false;
 	_net_brake_active = false;
 	_net_hold_start_time = 0;
@@ -1453,6 +1949,13 @@ void DytGuidance::publish_net_brake_setpoint()
 void DytGuidance::start_net_decel_if_ready(hrt_abstime now, const Vector3f &vehicle_velocity)
 {
 	if (!_net_decel_pending) {
+		return;
+	}
+
+	// The release command is sent at 250 ms, but the requested LOS alignment owns
+	// the complete attitude-action window. Start the original deceleration path
+	// only after that window has ended (300 ms with the default configuration).
+	if (_net_release_pitch_until != 0 && now < _net_release_pitch_until) {
 		return;
 	}
 
@@ -1905,6 +2408,53 @@ void DytGuidance::publish_status()
 	status.net_trigger_sent = _net_release_sent;
 	status.midcourse_active = cooperative_status_fresh() && _cooperative_status.active;
 	status.midcourse_target_valid = cooperative_status_fresh() && _cooperative_status.target_valid;
+	dyt_midcourse_log_s midcourse_log{};
+	midcourse_log.timestamp = now;
+	midcourse_log.target_timestamp = _midcourse_target_info.timestamp;
+	midcourse_log.command_timestamp = _last_midcourse_point_time;
+	midcourse_log.target_id = _midcourse_target_info.mavid;
+	midcourse_log.target_source = _midcourse_target_info.source;
+	midcourse_log.gps_valid = midcourse_target_geo_valid();
+	midcourse_log.target_age_s = _last_midcourse_target_time != 0 && now >= _last_midcourse_target_time ?
+				     (now - _last_midcourse_target_time) * 1e-6f : NAN;
+	midcourse_log.target_lat_deg = _last_midcourse_target_time != 0 ?
+				       _midcourse_target_info.lat : static_cast<double>(NAN);
+	midcourse_log.target_lon_deg = _last_midcourse_target_time != 0 ?
+				       _midcourse_target_info.lon : static_cast<double>(NAN);
+	midcourse_log.target_alt_m = _last_midcourse_target_time != 0 ?
+				      _midcourse_target_info.alt : static_cast<double>(NAN);
+	midcourse_log.target_velocity_ned_m_s[0] = _last_midcourse_target_time != 0 ?
+						    static_cast<float>(_midcourse_target_info.vx) : NAN;
+	midcourse_log.target_velocity_ned_m_s[1] = _last_midcourse_target_time != 0 ?
+						    static_cast<float>(_midcourse_target_info.vy) : NAN;
+	midcourse_log.target_velocity_ned_m_s[2] = _last_midcourse_target_time != 0 ?
+						    static_cast<float>(_midcourse_target_info.vz) : NAN;
+	Vector3f midcourse_target_position{};
+
+	if (midcourse_target_position_local(midcourse_target_position)) {
+		const Vector3f own_position(_vehicle_local_position.x, _vehicle_local_position.y, _vehicle_local_position.z);
+		const Vector3f midcourse_los_ned = midcourse_target_position - own_position;
+		midcourse_target_position.copyTo(midcourse_log.target_position_ned_m);
+		midcourse_los_ned.copyTo(midcourse_log.los_ned_m);
+
+	} else {
+		midcourse_log.target_position_ned_m[0] = NAN;
+		midcourse_log.target_position_ned_m[1] = NAN;
+		midcourse_log.target_position_ned_m[2] = NAN;
+		midcourse_log.los_ned_m[0] = NAN;
+		midcourse_log.los_ned_m[1] = NAN;
+		midcourse_log.los_ned_m[2] = NAN;
+	}
+
+	midcourse_log.pointing_valid = _midcourse_command_valid && _last_midcourse_point_time != 0;
+	midcourse_log.frame_yaw_unconstrained_deg = midcourse_log.pointing_valid ?
+						     _midcourse_command_yaw_unconstrained_deg : NAN;
+	midcourse_log.frame_pitch_unconstrained_deg = midcourse_log.pointing_valid ?
+						       _midcourse_command_pitch_unconstrained_deg : NAN;
+	midcourse_log.frame_yaw_sp_deg = midcourse_log.pointing_valid ? _midcourse_command_yaw_deg : NAN;
+	midcourse_log.frame_pitch_sp_deg = midcourse_log.pointing_valid ? _midcourse_command_pitch_deg : NAN;
+	_dyt_midcourse_log_pub.publish(midcourse_log);
+
 	status.state = static_cast<uint8_t>(_state);
 	status.requested_submode = _requested_submode;
 
@@ -1920,6 +2470,23 @@ void DytGuidance::publish_status()
 	status.target_locked = target_locked();
 	status.target_fresh = target_fresh();
 	status.intercept_allowed = intercept_allowed();
+	status.image_range_valid = _image_range_valid;
+	status.image_closing_speed_valid = _image_closing_speed_valid;
+	status.bbox_area_ratio = _bbox_area_ratio;
+	status.image_distance_area_m = _image_distance_area_m;
+	status.image_distance_long_m = _image_distance_long_m;
+	status.image_distance_disagreement_m = _image_distance_disagreement_m;
+	status.image_closing_speed_m_s = _image_closing_speed_m_s;
+	status.image_trigger_distance_m = _image_trigger_distance_m;
+	status.fused_range_valid = _fused_range_valid;
+	status.fused_closing_speed_valid = _fused_closing_speed_valid;
+	status.laser_fusion_used = _laser_fusion_used;
+	status.fused_distance_m = _fused_distance_m;
+	status.fused_closing_speed_m_s = _fused_closing_speed_m_s;
+	status.laser_distance_m = _fusion_laser_distance_m;
+	status.laser_closing_speed_m_s = _fusion_laser_closing_speed_m_s;
+	status.image_distance_bias_m = _fusion_distance_bias_m;
+	status.image_speed_bias_m_s = _fusion_speed_bias_m_s;
 	status.los_age_s = _have_target && _last_target.timestamp_sample > 0
 			   ? (hrt_absolute_time() - _last_target.timestamp_sample) * 1e-6f : NAN;
 	status.frame_dt_s = _have_target ? _last_target.frame_dt_s : NAN;
@@ -2697,9 +3264,19 @@ float DytGuidance::finite_param_deg(float value) const
 	return PX4_ISFINITE(value) ? value : 0.f;
 }
 
+void DytGuidance::frame_angle_limits(float &yaw_min_deg, float &yaw_max_deg, float &pitch_min_deg,
+				     float &pitch_max_deg) const
+{
+	yaw_min_deg = math::constrain(finite_param_deg(_param_frame_yaw_min_deg.get()), -180.f, 0.f);
+	yaw_max_deg = math::constrain(finite_param_deg(_param_frame_yaw_max_deg.get()), 0.f, 180.f);
+	pitch_min_deg = math::constrain(finite_param_deg(_param_frame_pitch_min_deg.get()), -180.f, 0.f);
+	pitch_max_deg = math::constrain(finite_param_deg(_param_frame_pitch_max_deg.get()), 0.f, 180.f);
+}
+
 bool DytGuidance::update_midcourse_pointing(hrt_abstime now, bool force)
 {
 	if (_param_midcourse_geo_enable.get() > 0) {
+		_midcourse_command_valid = false;
 		return update_midcourse_geo_tracking(now, force);
 	}
 
@@ -2741,8 +3318,16 @@ bool DytGuidance::update_midcourse_gimbal_pointing(hrt_abstime now, bool force)
 		return false;
 	}
 
-	yaw_deg = math::constrain(yaw_deg, FRAME_YAW_MIN_DEG, FRAME_YAW_MAX_DEG);
-	pitch_deg = math::constrain(pitch_deg, FRAME_PITCH_MIN_DEG, FRAME_PITCH_MAX_DEG);
+	const float yaw_unconstrained_deg = yaw_deg;
+	const float pitch_unconstrained_deg = pitch_deg;
+
+	float yaw_min_deg = NAN;
+	float yaw_max_deg = NAN;
+	float pitch_min_deg = NAN;
+	float pitch_max_deg = NAN;
+	frame_angle_limits(yaw_min_deg, yaw_max_deg, pitch_min_deg, pitch_max_deg);
+	yaw_deg = math::constrain(yaw_deg, yaw_min_deg, yaw_max_deg);
+	pitch_deg = math::constrain(pitch_deg, pitch_min_deg, pitch_max_deg);
 	const bool have_previous_angle = PX4_ISFINITE(_midcourse_yaw_deg) && PX4_ISFINITE(_midcourse_pitch_deg);
 	const float angle_delta_deg = have_previous_angle ?
 				      math::max(fabsf(yaw_deg - _midcourse_yaw_deg), fabsf(pitch_deg - _midcourse_pitch_deg)) :
@@ -2776,6 +3361,11 @@ bool DytGuidance::update_midcourse_gimbal_pointing(hrt_abstime now, bool force)
 	}
 
 	send_angle_command(yaw_deg, pitch_deg, dyt_command_s::CMD_SET_FRAME_ANGLE);
+	_midcourse_command_yaw_unconstrained_deg = yaw_unconstrained_deg;
+	_midcourse_command_pitch_unconstrained_deg = pitch_unconstrained_deg;
+	_midcourse_command_yaw_deg = yaw_deg;
+	_midcourse_command_pitch_deg = pitch_deg;
+	_midcourse_command_valid = true;
 	_last_midcourse_point_time = now;
 
 	if (_midcourse_burst_remaining > 0) {
@@ -2867,9 +3457,10 @@ void DytGuidance::update_auto_activation(hrt_abstime now)
 
 bool DytGuidance::handle_lock_candidate_or_timeout(hrt_abstime now)
 {
-	constexpr hrt_abstime LOCK_CANDIDATE_MAX_HOLD = 1200_ms;
 	constexpr hrt_abstime SCAN_UPDATE_DELAY = 100_ms;
 	constexpr hrt_abstime CANDIDATE_COOLDOWN = 800_ms;
+	const int32_t lock_hold_ms = math::constrain(_param_lock_hold_ms.get(), int32_t{100}, int32_t{10000});
+	const hrt_abstime lock_candidate_max_hold = static_cast<hrt_abstime>(lock_hold_ms) * 1000ULL;
 
 	if (!target_lock_candidate()) {
 		_candidate_lock_active = false;
@@ -2891,9 +3482,9 @@ bool DytGuidance::handle_lock_candidate_or_timeout(hrt_abstime now)
 
 	const hrt_abstime held_time = now - _candidate_lock_start_time;
 
-	if (held_time < LOCK_CANDIDATE_MAX_HOLD) {
+	if (held_time < lock_candidate_max_hold) {
 		update_hint_autolock(now);
-		_search_pause_until = now + LOCK_CANDIDATE_MAX_HOLD;
+		_search_pause_until = now + lock_candidate_max_hold;
 		_next_scan_time = now + SCAN_UPDATE_DELAY;
 		_scan_segment_target_deg = NAN;
 		return true;
@@ -2964,8 +3555,13 @@ void DytGuidance::advance_search_scan_area(float pitch_step_deg)
 
 void DytGuidance::send_angle_command(float yaw_deg, float pitch_deg, uint8_t command)
 {
-	const float yaw_limited = math::constrain(yaw_deg, FRAME_YAW_MIN_DEG, FRAME_YAW_MAX_DEG);
-	const float pitch_limited = math::constrain(pitch_deg, FRAME_PITCH_MIN_DEG, FRAME_PITCH_MAX_DEG);
+	float yaw_min_deg = NAN;
+	float yaw_max_deg = NAN;
+	float pitch_min_deg = NAN;
+	float pitch_max_deg = NAN;
+	frame_angle_limits(yaw_min_deg, yaw_max_deg, pitch_min_deg, pitch_max_deg);
+	const float yaw_limited = math::constrain(yaw_deg, yaw_min_deg, yaw_max_deg);
+	const float pitch_limited = math::constrain(pitch_deg, pitch_min_deg, pitch_max_deg);
 	const int16_t yaw_cmd = static_cast<int16_t>(roundf(yaw_limited * 100.f));
 	const int16_t pitch_cmd = static_cast<int16_t>(roundf(pitch_limited * 100.f));
 
@@ -3181,15 +3777,18 @@ void DytGuidance::Run()
 			_lock_streak = 0;
 
 			if (target_lock_candidate()) {
+				const int32_t lock_hold_ms = math::constrain(_param_lock_hold_ms.get(), int32_t{100}, int32_t{10000});
 				update_hint_autolock(now);
-				_search_pause_until = now + 1200_ms;
+				_search_pause_until = now + static_cast<hrt_abstime>(lock_hold_ms) * 1000ULL;
 				_next_scan_time = now + 100_ms;
 			} else {
 				update_midcourse_pointing(now);
 			}
 
+			const int32_t wait_ms = math::max(_param_wait_ms.get(), _param_lock_hold_ms.get());
+
 			if (now >= _state_enter_time &&
-			    (now - _state_enter_time) > static_cast<hrt_abstime>(_param_wait_ms.get()) * 1000ULL) {
+			    (now - _state_enter_time) > static_cast<hrt_abstime>(wait_ms) * 1000ULL) {
 				enter_lost_hold(dyt_guidance_status_s::LOST_REASON_TIMEOUT);
 			}
 		}
