@@ -107,14 +107,14 @@ PARAM_DEFINE_INT32(DYT_IR_W, 1280);
 /**
  * Infrared tracking image height
  *
- * Height of the infrared image used by the tracker. The Tweety V2.0.9.6
- * tracking parameter table specifies an infrared range up to 1024 pixels.
+ * Height of the infrared image used by the tracker. The installed infrared
+ * tracker output is configured as 1280 x 720 pixels.
  *
  * @min 16
  * @max 8192
  * @group DYT Gimbal
  */
-PARAM_DEFINE_INT32(DYT_IR_H, 1024);
+PARAM_DEFINE_INT32(DYT_IR_H, 720);
 
 /**
  * Tweety V2 locked tracking value

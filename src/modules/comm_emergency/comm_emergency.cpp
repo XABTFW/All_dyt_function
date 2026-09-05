@@ -258,8 +258,11 @@ void CommEmergency::Run()
 	input.battery_below_threshold = battery_remaining_valid && _battery_remaining < battery_threshold;
 	input.rtl_feasible = _rtl_feasible;
 	input.return_active = _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL;
-	input.resume_distance_allowed = !_vehicle_status.failsafe && _flight_distance_tracker.valid(now)
-					&& _flight_distance_tracker.distanceM() < RESUME_DISTANCE_LIMIT_M;
+	// Temporarily disable resuming Mission/Offboard after a communication-loss RTL has started.
+	// Restore the original condition below when return recovery is needed again.
+	input.resume_distance_allowed = false;
+	// input.resume_distance_allowed = !_vehicle_status.failsafe && _flight_distance_tracker.valid(now)
+	// 					&& _flight_distance_tracker.distanceM() < RESUME_DISTANCE_LIMIT_M;
 
 	const float wait_s = math::constrain(_param_wait_s.get(), 5.f, 600.f);
 	const uint64_t wait_us = static_cast<uint64_t>(wait_s * 1_s);

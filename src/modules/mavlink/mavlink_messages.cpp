@@ -126,6 +126,7 @@
 #include "streams/VIBRATION.hpp"
 #include "streams/WIND_COV.hpp"
 #include "streams/UAV_INFO.hpp"
+#include "streams/UAV_ROLE.hpp"
 #include "streams/DYT_TELEMETRY.hpp"
 #include "streams/MAVLINK_TEST.hpp"
 #include "streams/LEADER_ID.hpp"
@@ -263,6 +264,7 @@ static const StreamListItem streams_list[] = {
 	create_stream_list_item<MavlinkStreamMavlinktest>(),
 	create_stream_list_item<MavlinkStreamLeaderidinfo>(),
 	create_stream_list_item<MavlinkStreamUavInfo>(),
+	create_stream_list_item<MavlinkStreamUavRole>(),
 	create_stream_list_item<MavlinkStreamSwarmOperationAck>(),
 	create_stream_list_item<MavlinkStreamSwarmMissionItem>(),
 #if defined(HEARTBEAT_HPP)

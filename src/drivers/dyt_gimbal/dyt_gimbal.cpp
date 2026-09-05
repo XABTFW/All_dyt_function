@@ -81,6 +81,12 @@ private:
 	static constexpr uint8_t TRACKER_ASSIST_DISABLE{0x25};
 	static constexpr uint8_t TRACKER_TARGET_ID{0x26};
 	static constexpr uint8_t TRACKER_IMAGE_MODE{0x37};
+	static constexpr uint16_t IMAGE_MODE_VISIBLE{0};
+	static constexpr uint16_t IMAGE_MODE_INFRARED{1};
+	static constexpr uint8_t IMAGE_STATUS_VISIBLE{0x01};
+	static constexpr uint8_t IMAGE_STATUS_INFRARED{0x02};
+	static constexpr uint16_t RECOGNITION_TARGET_DETECTED{100};
+	static constexpr hrt_abstime IMAGE_SOURCE_CONFIRM_TIMEOUT{1_s};
 	static constexpr uint8_t TRACKER_OSD_ENABLE{0x07};
 	static constexpr uint8_t TRACKER_OSD_DISABLE{0x08};
 	static constexpr uint8_t LASER_POWER_ON{0x01};
@@ -174,6 +180,10 @@ private:
 	float _infrared_horizontal_fov_deg{NAN};
 	float _last_range_m{NAN};
 	bool _startup_home_sent{false};
+	bool _image_source_confirmation_pending{false};
+	bool _image_source_confirmation_warned{false};
+	uint8_t _requested_image_status{0};
+	hrt_abstime _image_source_request_time{0};
 
 	dyt_target_s _last_target{};
 
@@ -251,6 +261,9 @@ void DytGimbal::show_status()
 		 static_cast<double>(_visible_horizontal_fov_deg), static_cast<long>(_param_dyt_visible_width_px.get()),
 		 static_cast<long>(_param_dyt_visible_height_px.get()), static_cast<double>(_infrared_horizontal_fov_deg),
 		 static_cast<long>(_param_dyt_infrared_width_px.get()), static_cast<long>(_param_dyt_infrared_height_px.get()));
+	PX4_INFO("image source: raw=0x%02x requested=0x%02x pending=%d zoom=%.1f",
+		 static_cast<unsigned>(_last_target.status3), static_cast<unsigned>(_requested_image_status),
+		 _image_source_confirmation_pending, static_cast<double>(_last_target.zoom_ratio));
 	PX4_INFO("mode control: 0x%02x tx: %lu last command: %u write result/errno: %d/%d",
 		 static_cast<unsigned>(_mode_control), static_cast<unsigned long>(_command_tx_count),
 		 static_cast<unsigned>(_last_command), _last_write_result, _last_write_errno);
@@ -342,6 +355,11 @@ void DytGimbal::close_serial()
 		::close(_uart_fd);
 		_uart_fd = -1;
 	}
+
+	_image_source_confirmation_pending = false;
+	_image_source_confirmation_warned = false;
+	_requested_image_status = 0;
+	_image_source_request_time = 0;
 }
 
 speed_t DytGimbal::baud_to_speed(int baud) const
@@ -531,12 +549,29 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.frame_counter = _frame_counter;
 	target.parse_error_count = _parse_error_count;
 	target.self_test_raw = frame[4];
-	target.status1 = frame[6];
+	const uint16_t recognition_status = read_be_u16(frame, 36);
+	const bool recognition_detected = recognition_status == RECOGNITION_TARGET_DETECTED;
+	target.status1 = recognition_status <= UINT8_MAX ? static_cast<uint8_t>(recognition_status) : UINT8_MAX;
 	target.status2 = frame[31];
 	target.status3 = frame[5];
-	const bool infrared_source = frame[5] == 0x02;
+	const bool image_status_valid = frame[5] == IMAGE_STATUS_VISIBLE || frame[5] == IMAGE_STATUS_INFRARED;
+
+	if (_image_source_confirmation_pending && frame[5] == _requested_image_status) {
+		_image_source_confirmation_pending = false;
+		_image_source_confirmation_warned = false;
+
+	} else if (_image_source_confirmation_pending && !_image_source_confirmation_warned
+		   && now >= _image_source_request_time
+		   && now - _image_source_request_time > IMAGE_SOURCE_CONFIRM_TIMEOUT) {
+		PX4_WARN("image source 0x%02x not confirmed, raw status 0x%02x",
+			 static_cast<unsigned>(_requested_image_status), static_cast<unsigned>(frame[5]));
+		_image_source_confirmation_warned = true;
+	}
+
+	const bool image_source_confirmed = image_status_valid && !_image_source_confirmation_pending;
+	const bool infrared_source = frame[5] == IMAGE_STATUS_INFRARED;
 	target.video_source = infrared_source ? dyt_target_s::VIDEO_SOURCE_IR_1 : dyt_target_s::VIDEO_SOURCE_VIS_1;
-	target.zoom_ratio = infrared_source ? _infrared_zoom : _visible_zoom;
+	target.zoom_ratio = image_source_confirmed ? (infrared_source ? _infrared_zoom : _visible_zoom) : NAN;
 
 	target.gimbal_yaw_rate_rad_s = math::radians(read_be_float(frame, 7));
 	target.gimbal_pitch_rate_rad_s = math::radians(read_be_float(frame, 11));
@@ -548,7 +583,8 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 
 	const int16_t raw_los_x = read_be_s16(frame, 32);
 	const int16_t raw_los_y = read_be_s16(frame, 34);
-	const float horizontal_fov_deg = infrared_source ? _infrared_horizontal_fov_deg : _visible_horizontal_fov_deg;
+	const float horizontal_fov_deg = image_source_confirmed ?
+					 (infrared_source ? _infrared_horizontal_fov_deg : _visible_horizontal_fov_deg) : NAN;
 	const int32_t image_width_px = infrared_source ? _param_dyt_infrared_width_px.get() :
 				       _param_dyt_visible_width_px.get();
 	const int32_t image_height_px = infrared_source ? _param_dyt_infrared_height_px.get() :
@@ -564,15 +600,16 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.tracking_state = lock_reported ? dyt_target_s::TRACKING_STATE_LOCKED : dyt_target_s::TRACKING_STATE_SEARCH;
 	// Report the payload lock independently, but only expose a guidance-valid target
 	// when the pixel miss distance can be converted to a finite angular LOS.
-	target.target_valid = lock_reported && los_valid;
-	target.auto_hint = false;
+	target.target_valid = lock_reported && image_source_confirmed && los_valid;
+	target.auto_hint = recognition_detected;
 	target.follow_mode = frame[6] == MODE_FOLLOW_ANGLE;
 	target.motor_on = frame[6] != MODE_DISABLE;
 	target.laser_on = _last_laser_time > 0 && now - _last_laser_time <= LASER_FRESHNESS && PX4_ISFINITE(_last_range_m);
 	target.range_m = target.laser_on ? _last_range_m : NAN;
 	const uint16_t bbox_width_px = read_be_u16(frame, 40);
 	const uint16_t bbox_height_px = read_be_u16(frame, 42);
-	const bool bbox_valid = lock_reported && bbox_width_px > 0 && bbox_height_px > 0
+	const bool bbox_valid = (recognition_detected || lock_reported) && image_source_confirmed
+				&& bbox_width_px > 0 && bbox_height_px > 0
 				&& image_width_px > 0 && image_height_px > 0
 				&& bbox_width_px <= static_cast<uint32_t>(image_width_px)
 				&& bbox_height_px <= static_cast<uint32_t>(image_height_px);
@@ -838,11 +875,22 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 		send_tracker_command(TRACKER_TARGET_ID, cmd.value);
 		break;
 
-	case dyt_command_s::CMD_IMAGE_MODE:
+	case dyt_command_s::CMD_IMAGE_MODE: {
 		if (cmd.value <= 9) {
-			send_tracker_u16_command(TRACKER_IMAGE_MODE, static_cast<uint16_t>(cmd.value));
+			const uint16_t image_mode = static_cast<uint16_t>(cmd.value);
+
+			if (send_tracker_u16_command(TRACKER_IMAGE_MODE, image_mode)) {
+				if (image_mode == IMAGE_MODE_VISIBLE || image_mode == IMAGE_MODE_INFRARED) {
+					_requested_image_status = image_mode == IMAGE_MODE_INFRARED ?
+								  IMAGE_STATUS_INFRARED : IMAGE_STATUS_VISIBLE;
+					_image_source_confirmation_pending = true;
+					_image_source_confirmation_warned = false;
+					_image_source_request_time = hrt_absolute_time();
+				}
+			}
 		}
 		break;
+	}
 
 	case dyt_command_s::CMD_LASER_ON:
 		send_laser_command(LASER_POWER_ON);

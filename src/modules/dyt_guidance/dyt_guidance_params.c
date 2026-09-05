@@ -1,17 +1,16 @@
 /**
  * DYT aircraft role
  *
- * Identifies the aircraft to the ground station. Auto maps MAV_SYS_ID 2 to the
- * net-capture aircraft and all other IDs to the fighter aircraft.
+ * Identifies the aircraft mission type reported to the ground station.
  *
- * @value 0 Auto from MAV_SYS_ID
- * @value 1 Fighter aircraft
+ * @value 1 Impact aircraft
  * @value 2 Net-capture aircraft
- * @min 0
- * @max 2
+ * @value 3 Target aircraft (test only)
+ * @min 1
+ * @max 3
  * @group DYT Guidance
  */
-PARAM_DEFINE_INT32(DYT_VEH_TYPE, 0);
+PARAM_DEFINE_INT32(DYT_VEH_TYPE, 2);
 
 /**
  * Terminal guidance activation AUX channel
@@ -195,10 +194,13 @@ PARAM_DEFINE_FLOAT(DYTG_STK_TK, 0.30f);
 /**
  * Enable automatic guidance activation from detected target hints
  *
- * The activation AUX/button/payload switch rising edge always requests
- * green-box tracking and enters the wait-for-lock state. When enabled, target
- * hints can additionally activate the workflow after DYTG_AUTO_N consecutive
- * candidate frames if the initial activation could not start.
+ * When enabled, no activation AUX/button is required. After DYTG_AUTO_N
+ * consecutive servo-status frames report recognition value 100, guidance sends
+ * a 0x06 lock request and waits DYTG_LOCK_MS for the payload lock report. It
+ * makes at most three lock attempts (the initial request plus two retries).
+ * Selecting another flight mode exits the automatic terminal-guidance session.
+ * An explicit activation AUX/button rising edge continues to request tracking
+ * directly, independently of payload recognition.
  *
  * @boolean
  * @group DYT Guidance
@@ -649,11 +651,12 @@ PARAM_DEFINE_INT32(DYTG_FIRE_BTN, -1);
 /**
  * Enable fused target-range net release
  *
- * A fresh locked visible-light target at zoom 1.0 is always required. The
- * long-side image estimate provides continuity, while fresh gated SDM50 range
- * and closing speed calibrate it. During laser dropouts the calibrated image
- * estimate is used. Release starts when fused range is no greater than fused
- * closing_speed * 0.3 s + DYTG_FIRE_D. The area fit remains diagnostic only.
+ * A fresh locked visible-light or infrared target at zoom 1.0 is always
+ * required. The long-side image estimate uses the active source resolution and
+ * provides continuity, while fresh gated SDM50 range and closing speed calibrate
+ * it. During laser dropouts the calibrated image estimate is used. Release starts
+ * when fused range is no greater than fused closing_speed * 0.3 s + DYTG_FIRE_D.
+ * The area fit remains diagnostic only.
  *
  * @boolean
  * @group DYT Guidance

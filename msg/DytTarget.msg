@@ -56,7 +56,7 @@ float32 frame_dt_s
 float32 last_rx_age_s
 
 uint16 parse_error_count
-uint8 status1
+uint8 status1  # recognition status from protocol bytes 37-38: 100 detected, 0 not detected
 uint8 status2
 uint8 status3
 uint8 self_test_raw

@@ -222,6 +222,7 @@ param set-default DYT_RTRY_MS 1000
 # 设置导引头遥测接收超时时间，单位 ms。
 param set-default DYT_TO_MS 300
 
+param set-default SER_TEL1_BAUD 115200
 # ===== CRDZ（全部）（20 项）=====
 # 设置协同会合模块的启用 AUX 通道；-1 表示不使用。
 param set-default CRDZ_ACT_AUX -1
@@ -592,40 +593,40 @@ param set-default USB_MAV_MODE 5
 
 # GPS is connected through CAN. Reserve GPS1 for the forward-facing SDM50.
 # 设置主 GPS 驱动占用的串口；0 表示禁用。
-param set GPS_1_CONFIG 0
+param set-default GPS_1_CONFIG 0
 
 # MT-06 MAVLink rangefinder on GPS2.
 # 设置副 GPS 驱动占用的串口；0 表示禁用。
-param set GPS_2_CONFIG 0
+param set-default GPS_2_CONFIG 0
 # 设置 MAVLink 实例 1 使用的端口；202 表示 GPS2。
-param set MAV_1_CONFIG 202
+param set-default MAV_1_CONFIG 202
 # 设置 MAVLink 实例 1 的消息流模式；0 表示 Normal。
-param set MAV_1_MODE 0
+param set-default MAV_1_MODE 0
 # 设置 GPS2 物理串口波特率。
-param set SER_GPS2_BAUD 115200
+param set-default SER_GPS2_BAUD 115200
 # 设置测距仪高度融合模式；1 表示满足低速、低高度条件时融合。
-param set EKF2_RNG_CTRL 1
+param set-default EKF2_RNG_CTRL 1
 # 选择 EKF 高度基准；0 表示气压计。
-param set EKF2_HGT_REF 0
+param set-default EKF2_HGT_REF 0
 
 # ToF fast touchdown test settings.
 # 启用基于向下 ToF 测距的多旋翼快速触地检测。
-param set LNDMC_TD_EN 1
+param set-default LNDMC_TD_EN 1
 # 设置 ToF 快速触地的传感器到地面距离阈值，单位 m。
-param set LNDMC_TD_DIST 0.1
+param set-default LNDMC_TD_DIST 0.1
 # 设置允许快速触地判定的最大本地/Home 高度，单位 m。
-param set LNDMC_TD_ALT 5.0
+param set-default LNDMC_TD_ALT 5.0
 # 设置 ToF 触地条件的最小持续确认时间，单位 s。
-param set LNDMC_TD_TIME 0.04
+param set-default LNDMC_TD_TIME 0.04
 # 设置检测着陆后自动解除武装的等待时间，单位 s。
-param set COM_DISARM_LAND 0.05
+param set-default COM_DISARM_LAND 0.05
 
 # The custom communication emergency module owns RC and GCS link-loss mode changes.
 # 选择 RC 丢失后的原生失效保护动作；0 表示不执行动作。
-param set NAV_RCL_ACT 0
+param set-default NAV_RCL_ACT 0
 # 设置忽略 RC 丢失保护的飞行模式位掩码。
-param set COM_RCL_EXCEPT 7
+param set-default COM_RCL_EXCEPT 7
 # 选择地面站数据链丢失后的原生失效保护动作；0 表示不执行动作。
-param set NAV_DLL_ACT 0
+param set-default NAV_DLL_ACT 0
 
 safety_button start
