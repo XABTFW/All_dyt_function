@@ -7,15 +7,15 @@ class GnssEmergencyStateMachine
 public:
 	static constexpr uint64_t LAND_STATUS_TIMEOUT_US = 3'000'000;
 
-	enum class State : uint8_t { Idle, Landing };
-	enum class Action : uint8_t { None, Descend, ResumeMission };
+	enum class State : uint8_t { Idle, Landing, Released };
+	enum class Action : uint8_t { None, Land };
 
 	struct Input {
 		bool armed{false};
 		bool landed{true};
-		bool mission_active{false};
-		bool interference{false};
-		bool navigation_recovered{false};
+		bool gnss_failure{false};
+		bool manual_control_available{false};
+		bool manual_takeover{false};
 	};
 
 	static bool landedOrStatusUnavailable(uint64_t now_us, uint64_t timestamp_us, bool landed)
@@ -24,35 +24,39 @@ public:
 		       || now_us - timestamp_us >= LAND_STATUS_TIMEOUT_US;
 	}
 
-	Action update(uint64_t now_us, const Input &input, uint64_t recovery_time_us)
+	Action update(const Input &input)
 	{
 		if (!input.armed || input.landed) {
 			reset();
 			return Action::None;
 		}
 
-		if (_state == State::Idle) {
-			if (input.mission_active && input.interference) {
+		switch (_state) {
+		case State::Idle:
+			if (input.gnss_failure) {
 				_state = State::Landing;
-				return Action::Descend;
+				return Action::Land;
 			}
 
-			return Action::None;
-		}
+			break;
 
-		if (input.interference || !input.navigation_recovered) {
-			_recovery_started = 0;
-			return Action::None;
-		}
+		case State::Landing:
+			if (input.manual_takeover) {
+				_state = State::Released;
+			}
 
-		if (_recovery_started == 0) {
-			_recovery_started = now_us;
-			return Action::None;
-		}
+			break;
 
-		if (now_us - _recovery_started >= recovery_time_us) {
-			reset();
-			return Action::ResumeMission;
+		case State::Released:
+			if (!input.gnss_failure) {
+				reset();
+
+			} else if (!input.manual_control_available) {
+				_state = State::Landing;
+				return Action::Land;
+			}
+
+			break;
 		}
 
 		return Action::None;
@@ -61,13 +65,10 @@ public:
 	void reset()
 	{
 		_state = State::Idle;
-		_recovery_started = 0;
 	}
 
 	State state() const { return _state; }
-	uint64_t recoveryStarted() const { return _recovery_started; }
 
 private:
 	State _state{State::Idle};
-	uint64_t _recovery_started{0};
 };

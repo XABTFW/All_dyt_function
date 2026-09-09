@@ -644,27 +644,26 @@ python3 pymavlink/tools/mavgen.py \
 
 ## 9.2 GNSS 异常应急 gnss_emergency
 
-### 触发和恢复逻辑
+### 触发和接管逻辑
 
-1. 只在飞机已解锁、空中并且用户意图为 AUTO_MISSION 时触发。
-2. GPS 出现 critical jamming、indicated/confirmed spoofing，或健康 GPS 变得不可用时，进入 Landing 状态。
-3. 飞控请求 `NAVIGATION_STATE_DESCEND`，保持解锁并避免依赖水平位置。
-4. GNSS 和本地/全局位置有效性连续恢复 `GEM_REC_T` 秒后，恢复 AUTO_MISSION。
-5. 操作者切换到非 Mission/Land/Descend 意图时，释放该应急状态。
+1. 飞机已解锁且处于空中时，在任何飞行模式下监测 GNSS。
+2. GPS 数据连续超过 3 秒未更新或搜星数变为 0 时，进入 Landing 状态；fix 降级和 jamming/spoofing 不触发本模块。
+3. 飞控请求 `AUTO_LAND`；若宽松本地位置也不可用，PX4 自动退化为 `DESCEND`，GNSS 自行恢复不会中断降落。
+4. 只有实体 RC 链路有效且飞手通过 RC 模式开关发出模式请求时，才释放应急降落。
+5. RC 接管后保持 Released 状态；若 GPS 仍异常且 RC 再次丢失，则重新降落，GNSS 恢复后重新布防。
 
 | Parameter | Default | Units | Description |
 | --- | ---: | --- | --- |
-| `GEM_EN` | 1 | bool | 启用 GNSS 干扰/欺骗应急。 |
-| `GEM_REC_T` | 3 | s | 恢复 Mission 前的连续健康确认时间。 |
+| `GEM_EN` | 1 | bool | 启用 GNSS 数据丢失/零搜星应急。 |
 
 ### 地面站可见方式
 
-- `HEARTBEAT.custom_mode`：DESCEND 或恢复后的 AUTO_MISSION；
+- `HEARTBEAT.custom_mode`：AUTO_LAND 或 RC 接管后的模式；
 - 标准 GPS/估计器消息：GPS fix 和位置有效性；
 - `EXTENDED_SYS_STATE`：下降/落地结果；
-- `STATUSTEXT`：`GNSS emergency action: N`、`GNSS emergency released by mode change`。
+- `STATUSTEXT`：`GNSS emergency action: N`、`GNSS emergency released by RC mode change`。
 
-当前没有单独的 `GNSS_EMERGENCY_STATUS` 消息，jamming/spoofing 原始判据、恢复计时和 pending action 不能通过一个稳定业务字段读取。
+当前没有单独的 `GNSS_EMERGENCY_STATUS` 消息，GPS 丢失判据、RC 接管状态和 pending action 不能通过一个稳定业务字段读取。
 
 ## 10. 标准 COMMAND_LONG / COMMAND_ACK 使用原则
 

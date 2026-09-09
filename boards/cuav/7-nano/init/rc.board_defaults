@@ -3,6 +3,24 @@
 # board specific defaults
 #------------------------------------------------------------------------------
 
+# A-GNSS is injected through PX4's existing DroneCAN RTCMStream bridge.
+# Enable DroneCAN, subscribe to the CAN GNSS, and publish gps_inject_data to CAN.
+param set-default UAVCAN_ENABLE 2
+param set-default UAVCAN_SUB_GPS 1
+param set-default UAVCAN_PUB_RTCM 1
+
+# Validated GNSS preflight baseline for the CAN A-GNSS installation.
+param set-default EKF2_GPS_CHECK 2047
+param set-default EKF2_REQ_FIX 3
+param set-default EKF2_REQ_NSATS 6
+param set-default EKF2_REQ_EPH 6.5
+param set-default EKF2_REQ_EPV 5
+param set-default EKF2_REQ_PDOP 5
+param set-default EKF2_REQ_SACC 0.5
+param set-default EKF2_REQ_GPS_H 1.5
+param set-default EKF2_REQ_HDRIFT 0.8
+param set-default EKF2_REQ_VDRIFT 1.0
+
 # TELEM1 data link. 1200 B/s forces the normal MAVLink streams to about 20% of
 # their requested rates once swarm and DYT telemetry are enabled. 8000 B/s
 # leaves serial framing headroom at 115200 baud and keeps range updates timely.
@@ -32,7 +50,7 @@ param set-default MAV_2_UDP_PRT 14550
 # 旧版网捕释放俯仰修正增益；当前四元数渐变控制不使用。
 param set-default DYTG_ALP_K 1
 # 旧版网捕释放允许的最大俯仰修正角，单位度；当前控制不使用。
-param set-default DYTG_ALP_MAX 10
+param set-default DYTG_ALP_MAX 45
 # 旧版俯仰修正生效的最小速度，单位 m/s；当前控制不使用。
 param set-default DYTG_ALP_VMIN 1
 
@@ -98,7 +116,7 @@ param set-default DYTG_N_FOL 0.600000024
 # 设置拦截模式的比例导引系数。
 param set-default DYTG_N_INT 3.5
 # 设置导引头俯仰角零位偏移，单位度。
-param set-default DYTG_POFF -12
+param set-default DYTG_POFF 0
 # 限制目标 LOS 的最大预测时间，单位 s。
 param set-default DYTG_PREDMAX 0.0299999993
 # 设置导引头俯仰角的符号方向。
@@ -166,7 +184,7 @@ param set-default DYTG_YAWLIM 30
 # 设置启动航向跟踪所需的最小水平 LOS。
 param set-default DYTG_YAWLOS 0.119999997
 # 设置导引头偏航角零位偏移，单位度。
-param set-default DYTG_YOFF -7
+param set-default DYTG_YOFF 0
 # 设置导引头偏航角的符号方向。
 param set-default DYTG_YSIGN 1
 # 设置垂直跟踪速度的缩放系数。
@@ -261,7 +279,7 @@ param set-default DYTG_HOLD_EN 1
 # 启用网捕释放阶段的减速逻辑。
 param set-default DYTG_NET_EN 1
 # 设置网捕减速或停止距离，单位 m。
-param set-default DYTG_STOP_D 0.5
+param set-default DYTG_STOP_D 2
 # 设置目标速度低通滤波时间常数，单位 s。
 param set-default CRDZ_TVEL_TC 0.5
 # 设置本机在 DYT 导引系统中的飞行器角色。
@@ -282,12 +300,17 @@ param set-default CRDZ_VSLEW 3
 param set-default DYTG_MNT_MODE 0
 # 选择中途制导目标高度的解释方式。
 param set-default DYTG_ALT_MODE 1
+param set-default DYTG_AUTO_EN 0
 
 param set-default DYTG_ACT_AUX -1
 # 启用自定义通信紧急处置模块。
 param set-default CEM_EN 1
 # 选择通信丢失超时后的处置动作。
 param set-default CEM_TO_ACT 0
+
+param set-default DYTG_NET_ACC 4.0 
+
+param set-default PD_GRIPPER_TYPE 0
 
 # ===== 多旋翼姿态/角速度控制 MC（全部）（53 项）=====
 # 设置 Acro 模式横滚和俯仰摇杆指数曲线。
@@ -471,9 +494,9 @@ param set-default MPC_VEL_LP 0
 # 限制 Position 模式最大人工水平速度，单位 m/s。
 param set-default MPC_VEL_MANUAL 6
 # 限制 Position 模式最大后退速度；负值表示使用人工总上限。
-param set-default MPC_VEL_MAN_BACK -1
+param set-default MPC_VEL_MAN_BACK 4
 # 限制 Position 模式最大侧向速度；负值表示使用人工总上限。
-param set-default MPC_VEL_MAN_SIDE -1
+param set-default MPC_VEL_MAN_SIDE 4
 # 设置速度陷波滤波器带宽，单位 Hz。
 param set-default MPC_VEL_NF_BW 5
 # 设置速度陷波滤波器中心频率，单位 Hz；0 表示关闭。
@@ -588,6 +611,36 @@ param set-default RTL_RETURN_ALT 30
 # 设置开机加载的 airframe 启动脚本编号；4001 为 Quad X。
 param set-default SYS_AUTOSTART 4001
 
+#网捕
+param set-default PWM_MAIN_FUNC6 430
+param set-default PWM_MAIN_MIN6 1000
+param set-default PWM_MAIN_MAX6 2000
+param set-default PWM_MAIN_DIS6 1000
+param set-default PWM_MAIN_FAIL6 1000
+param set-default PWM_MAIN_REV 32
+param set-default PD_GRIPPER_TYPE 0
+
+#融合测距
+param set-default DYTG_FUS_EN 1
+
+#降落返航
+param set-default RTL_XY_ALT 5.0 
+param set-default RTL_XY_SPEED 5.0 
+param set-default RTL_XY_ACC 2.0  
+param set-default RTL_XY_JERK 2.0 
+
+param set-default EKF2_RNG_A_HMAX 5.0
+param set-default EKF2_RNG_A_VMAX 2.0
+param set-default LNDMC_TD_EN 1 
+param set-default LNDMC_TD_MAX 5.0 
+
+
+#禁区返航
+param set-default GF_ACTION 3
+
+#低电量返航
+param set-default CEM_BAT_THR 0.2
+
 # 设置 USB MAVLink 消息流模式；5 表示配置模式。
 param set-default USB_MAV_MODE 5
 
@@ -601,7 +654,7 @@ param set-default GPS_2_CONFIG 0
 # 设置 MAVLink 实例 1 使用的端口；202 表示 GPS2。
 param set-default MAV_1_CONFIG 202
 # 设置 MAVLink 实例 1 的消息流模式；0 表示 Normal。
-param set-default MAV_1_MODE 0
+param set-default MAV_1_MODE 1 
 # 设置 GPS2 物理串口波特率。
 param set-default SER_GPS2_BAUD 115200
 # 设置测距仪高度融合模式；1 表示满足低速、低高度条件时融合。

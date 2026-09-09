@@ -10,60 +10,87 @@ TEST(GnssEmergencyStateMachine, AcceptsOneHertzLandStatusBetweenUpdates)
 	EXPECT_TRUE(GnssEmergencyStateMachine::landedOrStatusUnavailable(2'500'000, 1'000'000, true));
 }
 
-TEST(GnssEmergencyStateMachine, DescendsThenResumesAfterStableRecovery)
+TEST(GnssEmergencyStateMachine, LandsInAnyAirborneMode)
 {
 	GnssEmergencyStateMachine machine;
 	GnssEmergencyStateMachine::Input input{};
 	input.armed = true;
 	input.landed = false;
-	input.mission_active = true;
-	input.interference = true;
-	EXPECT_EQ(machine.update(1'000'000, input, 3'000'000), GnssEmergencyStateMachine::Action::Descend);
+	input.gnss_failure = true;
+	EXPECT_EQ(machine.update(input), GnssEmergencyStateMachine::Action::Land);
+	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Landing);
+}
 
-	input.mission_active = false;
-	input.interference = false;
-	input.navigation_recovered = true;
-	EXPECT_EQ(machine.update(2'000'000, input, 3'000'000), GnssEmergencyStateMachine::Action::None);
-	EXPECT_EQ(machine.update(5'000'000, input, 3'000'000), GnssEmergencyStateMachine::Action::ResumeMission);
+TEST(GnssEmergencyStateMachine, GnssRecoveryAloneDoesNotInterruptLanding)
+{
+	GnssEmergencyStateMachine machine;
+	GnssEmergencyStateMachine::Input input{};
+	input.armed = true;
+	input.landed = false;
+	input.gnss_failure = true;
+	machine.update(input);
+
+	input.gnss_failure = false;
+	EXPECT_EQ(machine.update(input), GnssEmergencyStateMachine::Action::None);
+	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Landing);
+}
+
+TEST(GnssEmergencyStateMachine, RcTakeoverReleasesLandingUntilGnssRecovers)
+{
+	GnssEmergencyStateMachine machine;
+	GnssEmergencyStateMachine::Input input{};
+	input.armed = true;
+	input.landed = false;
+	input.gnss_failure = true;
+	machine.update(input);
+
+	input.manual_control_available = true;
+	input.manual_takeover = true;
+	EXPECT_EQ(machine.update(input), GnssEmergencyStateMachine::Action::None);
+	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Released);
+
+	input.manual_takeover = false;
+	EXPECT_EQ(machine.update(input), GnssEmergencyStateMachine::Action::None);
+	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Released);
+
+	input.gnss_failure = false;
+	machine.update(input);
 	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Idle);
+
+	input.gnss_failure = true;
+	EXPECT_EQ(machine.update(input), GnssEmergencyStateMachine::Action::Land);
 }
 
-TEST(GnssEmergencyStateMachine, RecoveryMustBeContinuous)
+TEST(GnssEmergencyStateMachine, RcLossAfterTakeoverRestartsLanding)
 {
 	GnssEmergencyStateMachine machine;
 	GnssEmergencyStateMachine::Input input{};
 	input.armed = true;
 	input.landed = false;
-	input.mission_active = true;
-	input.interference = true;
-	machine.update(1'000'000, input, 3'000'000);
+	input.gnss_failure = true;
+	machine.update(input);
 
-	input.mission_active = false;
-	input.interference = false;
-	input.navigation_recovered = true;
-	machine.update(2'000'000, input, 3'000'000);
-	input.interference = true;
-	input.navigation_recovered = false;
-	EXPECT_EQ(machine.update(4'000'000, input, 3'000'000), GnssEmergencyStateMachine::Action::None);
-	input.interference = false;
-	input.navigation_recovered = true;
-	machine.update(5'000'000, input, 3'000'000);
-	EXPECT_EQ(machine.update(7'000'000, input, 3'000'000), GnssEmergencyStateMachine::Action::None);
-	EXPECT_EQ(machine.update(8'000'000, input, 3'000'000), GnssEmergencyStateMachine::Action::ResumeMission);
+	input.manual_control_available = true;
+	input.manual_takeover = true;
+	machine.update(input);
+	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Released);
+
+	input.manual_control_available = false;
+	input.manual_takeover = false;
+	EXPECT_EQ(machine.update(input), GnssEmergencyStateMachine::Action::Land);
+	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Landing);
 }
 
-TEST(GnssEmergencyStateMachine, DoesNotResumeAfterTouchdown)
+TEST(GnssEmergencyStateMachine, LandingOrDisarmingClearsEmergency)
 {
 	GnssEmergencyStateMachine machine;
 	GnssEmergencyStateMachine::Input input{};
 	input.armed = true;
 	input.landed = false;
-	input.mission_active = true;
-	input.interference = true;
-	machine.update(1'000'000, input, 3'000'000);
+	input.gnss_failure = true;
+	machine.update(input);
+
 	input.landed = true;
-	input.interference = false;
-	input.navigation_recovered = true;
-	EXPECT_EQ(machine.update(2'000'000, input, 3'000'000), GnssEmergencyStateMachine::Action::None);
+	EXPECT_EQ(machine.update(input), GnssEmergencyStateMachine::Action::None);
 	EXPECT_EQ(machine.state(), GnssEmergencyStateMachine::State::Idle);
 }

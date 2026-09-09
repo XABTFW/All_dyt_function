@@ -1156,13 +1156,22 @@ Mavlink::configure_stream(const char *stream_name, const float rate)
 {
 	PX4_DEBUG("configure_stream(%s, %.3f)", stream_name, (double)rate);
 
+	const bool stream_disabled = strcmp(stream_name, "HYGROMETER_SENSOR") == 0
+				     || strcmp(stream_name, "CAMERA_IMAGE_CAPTURED") == 0
+				     || strcmp(stream_name, "CAMERA_TRIGGER") == 0
+				     || strcmp(stream_name, "ADSB_VEHICLE") == 0
+				     || strcmp(stream_name, "ORBIT_EXECUTION_STATUS") == 0
+				     || strcmp(stream_name, "OPTICAL_FLOW_RAD") == 0
+				     || strcmp(stream_name, "ESC_INFO") == 0
+				     || strcmp(stream_name, "MOUNT_ORIENTATION") == 0;
+
 	/* calculate interval in us, -1 means unlimited stream, 0 means disabled */
 	int interval = 0;
 
-	if (rate > 0.000001f) {
+	if (!stream_disabled && rate > 0.000001f) {
 		interval = (1000000.0f / rate);
 
-	} else if (rate < 0.0f) {
+	} else if (!stream_disabled && rate < 0.0f) {
 		interval = -1;
 	}
 
@@ -1404,13 +1413,16 @@ Mavlink::configure_streams_to_default(const char *configure_single_stream)
 	};
 
 	const float unlimited_rate = -1.0f;
-	configure_stream_local("UAV_INFO", 10.0f);
-	configure_stream_local("UAV_ROLE", 1.0f);
-	configure_stream_local("LEADER_ID", 1.0f);
-	configure_stream_local("SWARM_OPERATION_ACK", 10.0f);
-	configure_stream_local("SWARM_MISSION_ITEM", 5.0f);
-	configure_stream_local("TEST_MAVLINK", 10.0f);
-	configure_stream_local("DYT_TELEMETRY", 10.0f);
+
+	if (_mode != MAVLINK_MODE_CUSTOM) {
+		configure_stream_local("UAV_INFO", 10.0f);
+		configure_stream_local("UAV_ROLE", 1.0f);
+		configure_stream_local("LEADER_ID", 0.0f);
+		configure_stream_local("SWARM_OPERATION_ACK", 0.0f);
+		configure_stream_local("SWARM_MISSION_ITEM", 0.0f);
+		configure_stream_local("TEST_MAVLINK", 0.0f);
+		configure_stream_local("DYT_TELEMETRY", 10.0f);
+	}
 
 	switch (_mode) {
 	case MAVLINK_MODE_NORMAL:

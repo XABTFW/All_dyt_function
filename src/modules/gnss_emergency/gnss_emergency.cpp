@@ -2,7 +2,6 @@
 
 #include <commander/px4_custom_mode.h>
 #include <drivers/drv_hrt.h>
-#include <lib/mathlib/mathlib.h>
 #include <px4_platform_common/log.h>
 
 GnssEmergency::GnssEmergency() :
@@ -22,6 +21,7 @@ void GnssEmergency::reset()
 	_state_machine.reset();
 	_pending_action = GnssEmergencyStateMachine::Action::None;
 	_last_command_time = 0;
+	_last_rc_mode_request = 0;
 }
 
 void GnssEmergency::send_mode_command(GnssEmergencyStateMachine::Action action, const vehicle_status_s &status)
@@ -30,18 +30,11 @@ void GnssEmergency::send_mode_command(GnssEmergencyStateMachine::Action action, 
 	command.timestamp = hrt_absolute_time();
 
 	switch (action) {
-	case GnssEmergencyStateMachine::Action::Descend:
-		// DESCEND keeps the vehicle armed and does not require horizontal position.
-		// It also avoids treating the recoverable GNSS emergency as a user-requested AUTO_LAND.
-		command.command = vehicle_command_s::VEHICLE_CMD_SET_NAV_STATE;
-		command.param1 = vehicle_status_s::NAVIGATION_STATE_DESCEND;
-		break;
-
-	case GnssEmergencyStateMachine::Action::ResumeMission:
+	case GnssEmergencyStateMachine::Action::Land:
 		command.command = vehicle_command_s::VEHICLE_CMD_DO_SET_MODE;
 		command.param1 = 1.f;
 		command.param2 = PX4_CUSTOM_MAIN_MODE_AUTO;
-		command.param3 = PX4_CUSTOM_SUB_MODE_AUTO_MISSION;
+		command.param3 = PX4_CUSTOM_SUB_MODE_AUTO_LAND;
 		break;
 
 	case GnssEmergencyStateMachine::Action::None:
@@ -76,9 +69,15 @@ void GnssEmergency::Run()
 	_sensor_gps_sub.update(&_sensor_gps);
 	_failsafe_flags_sub.update(&_failsafe_flags);
 
+	if (_action_request_sub.update(&_action_request)
+	    && _action_request.action == action_request_s::ACTION_SWITCH_MODE
+	    && (_action_request.source == action_request_s::SOURCE_RC_SWITCH
+		|| _action_request.source == action_request_s::SOURCE_RC_MODE_SLOT)) {
+		_last_rc_mode_request = _action_request.timestamp;
+	}
+
 	if (_param_enable.get() <= 0) {
 		reset();
-		_gps_seen_healthy = false;
 		return;
 	}
 
@@ -93,63 +92,53 @@ void GnssEmergency::Run()
 
 	if (!armed) {
 		reset();
-		_gps_seen_healthy = false;
 		return;
 	}
 
-	const bool gps_fresh = _sensor_gps.timestamp != 0 && now - _sensor_gps.timestamp < 1_s;
-	const bool explicit_interference = gps_fresh &&
-		(_sensor_gps.jamming_state == sensor_gps_s::JAMMING_STATE_DETECTED ||
-		 _sensor_gps.spoofing_state >= sensor_gps_s::SPOOFING_STATE_MITIGATED);
-	const bool gps_usable = gps_fresh && _sensor_gps.fix_type >= sensor_gps_s::FIX_TYPE_3D && !explicit_interference;
-
-	if (gps_usable) {
-		_gps_seen_healthy = true;
-	}
-
-	const bool emergency_mode_intended =
-		_vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION ||
-		_vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND ||
-		_vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_DESCEND;
-
-	if (_state_machine.state() == GnssEmergencyStateMachine::State::Landing && !emergency_mode_intended) {
-		PX4_WARN("GNSS emergency released by mode change");
-		reset();
-		return;
-	}
+	const bool gps_available = _sensor_gps.timestamp != 0 && _sensor_gps.timestamp <= now
+				   && now - _sensor_gps.timestamp < 3_s && _sensor_gps.satellites_used > 0;
 
 	const bool flags_fresh = _failsafe_flags.timestamp != 0 && now - _failsafe_flags.timestamp < 1_s;
-	const bool navigation_recovered = gps_usable && flags_fresh &&
-		!_failsafe_flags.local_position_invalid && !_failsafe_flags.global_position_invalid;
-	const bool interference = explicit_interference || (_gps_seen_healthy && !gps_usable);
+	const bool manual_control_available = flags_fresh && !_failsafe_flags.manual_control_signal_lost;
+	const bool rc_mode_request_fresh = _last_rc_mode_request != 0 && _last_rc_mode_request <= now
+					   && now - _last_rc_mode_request < 1_s;
+	const bool manual_takeover = manual_control_available && rc_mode_request_fresh;
 	const bool landed = GnssEmergencyStateMachine::landedOrStatusUnavailable(now, _land_detected.timestamp,
 			    _land_detected.landed);
 
 	GnssEmergencyStateMachine::Input input{};
 	input.armed = armed;
 	input.landed = landed;
-	input.mission_active =
-		_vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
-	input.interference = interference;
-	input.navigation_recovered = navigation_recovered;
+	input.gnss_failure = !gps_available;
+	input.manual_control_available = manual_control_available;
+	input.manual_takeover = manual_takeover;
 
-	const float recovery_time_s = math::constrain(_param_recovery_time_s.get(), 1.f, 30.f);
-	const uint64_t recovery_time_us = static_cast<uint64_t>(recovery_time_s * 1_s);
-	const GnssEmergencyStateMachine::Action action = _state_machine.update(now, input, recovery_time_us);
+	const GnssEmergencyStateMachine::State state_before_update = _state_machine.state();
+	const GnssEmergencyStateMachine::Action action = _state_machine.update(input);
+
+	if (state_before_update == GnssEmergencyStateMachine::State::Landing
+	    && _state_machine.state() == GnssEmergencyStateMachine::State::Released) {
+		PX4_WARN("GNSS emergency released by RC mode change");
+		_pending_action = GnssEmergencyStateMachine::Action::None;
+		_last_command_time = 0;
+	}
 
 	if (action != GnssEmergencyStateMachine::Action::None) {
 		_pending_action = action;
 		PX4_WARN("GNSS emergency action: %u", static_cast<unsigned>(action));
 	}
 
-	if (_pending_action != GnssEmergencyStateMachine::Action::None) {
-		const bool landing_active = _pending_action == GnssEmergencyStateMachine::Action::Descend
-					    && (_vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND
-						|| _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_DESCEND);
-		const bool mission_active = _pending_action == GnssEmergencyStateMachine::Action::ResumeMission
-					    && _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION;
+	const bool landing_active = _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND
+				    || _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_DESCEND;
 
-		if (landing_active || mission_active) {
+	if (_state_machine.state() == GnssEmergencyStateMachine::State::Landing
+	    && _pending_action == GnssEmergencyStateMachine::Action::None && !landing_active) {
+		_pending_action = GnssEmergencyStateMachine::Action::Land;
+		_last_command_time = 0;
+	}
+
+	if (_pending_action != GnssEmergencyStateMachine::Action::None) {
+		if (_pending_action == GnssEmergencyStateMachine::Action::Land && landing_active) {
 			_pending_action = GnssEmergencyStateMachine::Action::None;
 
 		} else if (_last_command_time == 0 || now - _last_command_time >= 1_s) {
@@ -160,10 +149,8 @@ void GnssEmergency::Run()
 
 int GnssEmergency::print_status()
 {
-	PX4_INFO("state=%u pending=%u gps_seen=%d recovery_age=%.1f s", static_cast<unsigned>(_state_machine.state()),
-		 static_cast<unsigned>(_pending_action), _gps_seen_healthy,
-		 _state_machine.recoveryStarted() == 0 ? -1.0 :
-		 (double)(hrt_absolute_time() - _state_machine.recoveryStarted()) * 1e-6);
+	PX4_INFO("state=%u pending=%u", static_cast<unsigned>(_state_machine.state()),
+		 static_cast<unsigned>(_pending_action));
 	return 0;
 }
 
@@ -197,7 +184,7 @@ int GnssEmergency::print_usage(const char *reason)
 		PX4_WARN("%s", reason);
 	}
 
-	PRINT_MODULE_DESCRIPTION("GNSS jamming, spoofing and loss landing/descend with mission recovery before touchdown.");
+	PRINT_MODULE_DESCRIPTION("GNSS three-second data loss and zero-satellite landing with RC takeover.");
 	PRINT_MODULE_USAGE_NAME("gnss_emergency", "controller");
 	PRINT_MODULE_USAGE_COMMAND("start");
 	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();

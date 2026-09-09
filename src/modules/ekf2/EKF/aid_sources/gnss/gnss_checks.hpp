@@ -78,6 +78,7 @@ public:
 		_passed = false;
 		_time_last_pass_us = 0;
 		_time_last_fail_us = 0;
+		_drift_reference_valid = false;
 		resetDriftFilters();
 	}
 
@@ -139,6 +140,7 @@ private:
 	float _vel_d_filt{0.0f};		///< GNSS filtered Down velocity (m/sec)
 	uint64_t _time_last_fail_us{0};
 	uint64_t _time_last_pass_us{0};
+	bool _drift_reference_valid{false};
 	bool _initial_checks_passed{false};
 	bool _passed{false};
 

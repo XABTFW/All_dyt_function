@@ -201,6 +201,8 @@ private:
 	bool target_lock_candidate() const;
 	bool target_usable() const;
 	bool intercept_allowed() const;
+	bool post_release_impact_active() const;
+	void enforce_post_release_impact_mode();
 	void update_net_release_trigger(hrt_abstime now);
 	float target_bbox_area_percent() const;
 	bool update_image_net_estimate(hrt_abstime now);
@@ -316,6 +318,8 @@ private:
 	bool _automatic_offboard_seen{false};
 	bool _automatic_rearm_blocked{false};
 	bool _automatic_operator_exit_blocked{false};
+	// Latched for the module lifetime once the net is released. Guidance state
+	// transitions must not re-arm the release; a new power cycle reconstructs it false.
 	bool _net_release_sent{false};
 	bool _net_release_pitch_pending{false};
 	bool _net_hold_pending{false};
@@ -1289,6 +1293,25 @@ bool DytGuidance::intercept_allowed() const
 	return _los_body_latest(0) > cone_cos;
 }
 
+bool DytGuidance::post_release_impact_active() const
+{
+	return effective_vehicle_type() == dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE && _net_release_sent;
+}
+
+void DytGuidance::enforce_post_release_impact_mode()
+{
+	if (!post_release_impact_active()) {
+		return;
+	}
+
+	// Once a net-capture aircraft has released the net, it continues with the
+	// ordinary terminal guidance controller. Do not retain any net-specific
+	// pitch correction, repeated release, progressive deceleration or hover.
+	clear_net_release_trigger();
+	clear_net_hold();
+	clear_net_decel();
+}
+
 void DytGuidance::update_net_release_trigger(hrt_abstime now)
 {
 	const bool manual_fire_request = manual_fire_requested();
@@ -2202,7 +2225,20 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 	}
 
 	const hrt_abstime now = hrt_absolute_time();
-	update_net_release_trigger(now);
+	const bool net_capture_aircraft = effective_vehicle_type() == dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE;
+
+	if (net_capture_aircraft && !_net_release_sent) {
+		update_net_release_trigger(now);
+
+		// The release state can change inside update_net_release_trigger(). Apply
+		// the impact transition immediately in the same control iteration.
+		if (post_release_impact_active()) {
+			enforce_post_release_impact_mode();
+		}
+
+	} else if (post_release_impact_active()) {
+		enforce_post_release_impact_mode();
+	}
 
 	if (!update_los_estimate(now)) {
 		_attitude_diag_timestamp = 0;
@@ -2449,7 +2485,10 @@ void DytGuidance::publish_status()
 	status.timestamp = now;
 	status.command_sequence = _ground_command_sequence;
 	status.net_trigger_count = _net_trigger_count;
-	status.vehicle_type = effective_vehicle_type();
+	// Keep the configured role internally so the post-release latch remains
+	// valid, but report the aircraft as an impact aircraft after net release.
+	status.vehicle_type = post_release_impact_active() ? dyt_guidance_status_s::VEHICLE_TYPE_FIGHTER :
+			      effective_vehicle_type();
 	status.guidance_phase = actual_guidance_phase();
 	status.gcs_phase_request = _gcs_phase_request;
 	status.command_phase = _ground_command_phase;
@@ -2729,7 +2768,6 @@ void DytGuidance::enter_state(TaskState new_state, uint8_t lost_reason)
 		_midcourse_pitch_deg = NAN;
 		_track_handoff_time = 0;
 		_track_handoff_velocity_valid = false;
-		_net_release_sent = false;
 		clear_net_release_trigger();
 		clear_net_hold();
 		clear_net_decel();
@@ -2801,7 +2839,6 @@ void DytGuidance::enter_state(TaskState new_state, uint8_t lost_reason)
 		_candidate_ignored_sample_time = 0;
 		_track_handoff_time = 0;
 		_track_handoff_velocity_valid = false;
-		_net_release_sent = false;
 		clear_net_release_trigger();
 		clear_net_hold();
 		clear_net_decel();
@@ -2818,7 +2855,6 @@ void DytGuidance::enter_state(TaskState new_state, uint8_t lost_reason)
 		_candidate_ignored_sample_time = 0;
 		_track_handoff_time = 0;
 		_track_handoff_velocity_valid = false;
-		_net_release_sent = false;
 		clear_net_release_trigger();
 		clear_net_hold();
 		clear_net_decel();
@@ -3782,6 +3818,7 @@ void DytGuidance::Run()
 	update_params_if_needed();
 	update_vehicle_id();
 	update_subscriptions();
+	enforce_post_release_impact_mode();
 
 	const hrt_abstime now = hrt_absolute_time();
 
@@ -3793,6 +3830,7 @@ void DytGuidance::Run()
 	const bool midcourse_pointing_request = midcourse_pointing_requested();
 	const bool auto_activation_enabled = _param_auto_enable.get() > 0;
 	const bool intercept_request = aux_switch_active(_param_int_aux.get());
+	const bool intercept_commanded = intercept_request || post_release_impact_active();
 	const bool activation_rising = activation_request && !_prev_activation_request;
 
 	// A failed three-attempt cycle is re-armed after the target disappears. An
@@ -3846,7 +3884,7 @@ void DytGuidance::Run()
 	}
 
 	_prev_activation_request = activation_request;
-	_requested_submode = intercept_request ? dyt_guidance_status_s::SUBMODE_INTERCEPT :
+	_requested_submode = intercept_commanded ? dyt_guidance_status_s::SUBMODE_INTERCEPT :
 			     dyt_guidance_status_s::SUBMODE_FOLLOW;
 
 	if (!auto_activation_enabled && activation_request && (_state == TaskState::Idle || _state == TaskState::Abort)) {
@@ -3945,7 +3983,7 @@ void DytGuidance::Run()
 		} else {
 			_lost_streak = 0;
 
-			if (intercept_request && intercept_allowed()) {
+			if (intercept_commanded && intercept_allowed()) {
 				enter_state(TaskState::TrackIntercept);
 			}
 		}
@@ -3963,7 +4001,7 @@ void DytGuidance::Run()
 		} else {
 			_lost_streak = 0;
 
-			if (!intercept_request || !intercept_allowed()) {
+			if (!intercept_commanded || !intercept_allowed()) {
 				enter_state(TaskState::TrackFollow);
 			}
 		}
@@ -3974,7 +4012,7 @@ void DytGuidance::Run()
 			++_relock_streak;
 
 			if (_relock_streak >= _param_relock_frames.get()) {
-				enter_state(intercept_request && intercept_allowed() ? TaskState::TrackIntercept : TaskState::TrackFollow);
+				enter_state(intercept_commanded && intercept_allowed() ? TaskState::TrackIntercept : TaskState::TrackFollow);
 			}
 
 		} else {

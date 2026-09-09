@@ -49,6 +49,43 @@ bool GnssChecks::run(const gnssSample &gnss, uint64_t time_us)
 
 	bool passed = false;
 
+	// Never use a no-fix placeholder as a drift reference. Some DroneCAN
+	// receivers publish zero or otherwise invalid coordinates before the first
+	// usable solution, which would saturate the 10-second drift filters.
+	if (gnss.fix_type < _params.ekf2_req_fix) {
+		_check_fail_status.flags.fix = true;
+		_drift_reference_valid = false;
+		resetDriftFilters();
+		_time_last_fail_us = time_us;
+		_passed = false;
+		return false;
+	}
+
+	if (!_control_status.flags.in_air) {
+		// A fix type alone does not make the reported position trustworthy. Wait
+		// until every enabled non-drift quality check is satisfied before using
+		// the sample as a drift reference. Comparisons with NaN are false, so an
+		// unavailable accuracy or DOP field cannot initialize the reference.
+		const bool reference_quality_passed =
+			(!isCheckEnabled(GnssChecksMask::kNsats) || (gnss.nsats >= _params.ekf2_req_nsats))
+			&& (!isCheckEnabled(GnssChecksMask::kPdop) || (gnss.pdop <= _params.ekf2_req_pdop))
+			&& (!isCheckEnabled(GnssChecksMask::kHacc) || (gnss.hacc <= _params.ekf2_req_eph))
+			&& (!isCheckEnabled(GnssChecksMask::kVacc) || (gnss.vacc <= _params.ekf2_req_epv))
+			&& (!isCheckEnabled(GnssChecksMask::kSacc) || (gnss.sacc <= _params.ekf2_req_sacc))
+			&& (!isCheckEnabled(GnssChecksMask::kSpoofed) || !gnss.spoofed);
+
+		if (!reference_quality_passed) {
+			_drift_reference_valid = false;
+			resetDriftFilters();
+
+		} else if (!_drift_reference_valid) {
+			lat_lon_prev.initReference(gnss.lat, gnss.lon, gnss.time_us);
+			_alt_prev = gnss.alt;
+			resetDriftFilters();
+			_drift_reference_valid = true;
+		}
+	}
+
 	if (_initial_checks_passed) {
 		if (runSimplifiedChecks(gnss)) {
 			_time_last_pass_us = time_us;
@@ -171,6 +208,17 @@ void GnssChecks::runOnGroundGnssChecks(const gnssSample &gnss)
 		_check_fail_status.flags.hspeed = false;
 		_check_fail_status.flags.vspeed = false;
 
+		resetDriftFilters();
+		return;
+	}
+
+	if (!_drift_reference_valid) {
+		// Other quality checks already reject this sample. Keep drift-related
+		// flags neutral until a trustworthy reference has been established.
+		_check_fail_status.flags.hdrift = false;
+		_check_fail_status.flags.vdrift = false;
+		_check_fail_status.flags.hspeed = false;
+		_check_fail_status.flags.vspeed = false;
 		resetDriftFilters();
 		return;
 	}
