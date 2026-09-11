@@ -348,7 +348,12 @@ PARAM_DEFINE_INT32(DYTG_CTRMS, 400);
 PARAM_DEFINE_INT32(DYTG_RTRYMS, 1000);
 
 /**
- * Fixed pipeline delay
+ * Fixed image pipeline delay
+ *
+ * Estimated time from image exposure/tracker sampling until the corresponding
+ * servo-status frame is received by PX4. The payload protocol has no sample
+ * timestamp, so DYT guidance subtracts this delay from the receive time before
+ * interpolating aircraft attitude and converting the body LOS to NED.
  *
  * @unit ms
  * @min 0

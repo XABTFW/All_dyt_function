@@ -69,6 +69,9 @@ public:
 
 private:
 	static constexpr int OBS_BUFFER_LEN{6};
+	static constexpr int ATTITUDE_HISTORY_LEN{256};
+	static constexpr hrt_abstime MIN_LOS_OBSERVATION_INTERVAL{10_ms};
+	static constexpr hrt_abstime ATTITUDE_EXTRAPOLATION_LIMIT{20_ms};
 	static constexpr float TARGET_MIN_BBOX_PX{4.f};
 	static constexpr float TARGET_MAX_LOS_RAD{0.45f};
 	static constexpr float TARGET_MAX_HINT_LOS_RAD{0.35f};
@@ -116,8 +119,12 @@ private:
 
 	struct LosObservation {
 		hrt_abstime sample_time{0};
-		Vector3f los_body{};
-		float frame_dt_s{0.f};
+		Vector3f los_ned{};
+	};
+
+	struct AttitudeHistorySample {
+		hrt_abstime sample_time{0};
+		Quatf attitude{};
 	};
 
 	struct ImageRangeSample {
@@ -175,7 +182,9 @@ private:
 
 	void handle_new_target(const dyt_target_s &target);
 	bool build_los_body(const dyt_target_s &target, Vector3f &los_body) const;
-	void push_observation(const Vector3f &los_body, hrt_abstime sample_time, float frame_dt_s);
+	void record_attitude_sample(const vehicle_attitude_s &attitude);
+	bool interpolate_attitude(hrt_abstime sample_time, Quatf &attitude) const;
+	void push_observation(const Vector3f &los_ned, hrt_abstime sample_time);
 	void clear_observations();
 	bool update_los_estimate(hrt_abstime now);
 
@@ -392,6 +401,12 @@ private:
 
 	LosObservation _observations[OBS_BUFFER_LEN]{};
 	int _observation_count{0};
+	AttitudeHistorySample _attitude_history[ATTITUDE_HISTORY_LEN]{};
+	int _attitude_history_count{0};
+	int _attitude_history_next{0};
+	hrt_abstime _last_attitude_sample_time{0};
+	uint8_t _attitude_reset_counter{0};
+	bool _attitude_reset_counter_initialized{false};
 
 	dyt_target_s _last_target{};
 	bool _have_target{false};
@@ -420,7 +435,6 @@ private:
 	Vector3f _los_ned{};
 	Vector3f _los_body_latest{};
 	Vector3f _los_filtered{};
-	Vector3f _prev_los_filtered{};
 	Vector3f _omega_los{};
 	Vector3f _velocity_sp{};
 	Vector3f _acceleration_sp{};
@@ -440,6 +454,9 @@ private:
 	float _max_abs_pitch_error_rad{NAN};
 	float _max_attitude_error_rad{NAN};
 	hrt_abstime _prev_los_update{0};
+	hrt_abstime _last_processed_los_sample_time{0};
+	hrt_abstime _last_accepted_los_receive_time{0};
+	float _last_los_observation_dt_s{NAN};
 	hrt_abstime _last_track_setpoint_time{0};
 	bool _los_filter_initialized{false};
 
@@ -855,7 +872,13 @@ void DytGuidance::handle_dyt_command_events()
 
 void DytGuidance::update_subscriptions()
 {
-	_vehicle_attitude_sub.update(&_vehicle_attitude);
+	vehicle_attitude_s attitude{};
+
+	if (_vehicle_attitude_sub.update(&attitude)) {
+		_vehicle_attitude = attitude;
+		record_attitude_sample(attitude);
+	}
+
 	_vehicle_global_position_sub.update(&_vehicle_global_position);
 	_vehicle_local_position_sub.update(&_vehicle_local_position);
 	_vehicle_local_position_setpoint_sub.update(&_vehicle_local_position_setpoint);
@@ -1147,8 +1170,35 @@ bool DytGuidance::manual_takeover_detected() const
 
 void DytGuidance::handle_new_target(const dyt_target_s &target)
 {
-	if (!target.target_valid || !target_geometry_valid(target)) {
+	if (!target.target_valid || !target_geometry_valid(target) || target.timestamp_sample == 0) {
 		return;
+	}
+
+	// The payload protocol has no image timestamp or frame sequence. Treat the
+	// receive timestamp as the end of a fixed, bench-calibrated image pipeline
+	// delay, then align the observation with the aircraft attitude at that time.
+	const float configured_delay_ms = _param_delay_ms.get();
+
+	if (!PX4_ISFINITE(configured_delay_ms)) {
+		return;
+	}
+
+	const float delay_ms = math::constrain(configured_delay_ms, 0.f, 1000.f);
+	const hrt_abstime delay_us = static_cast<hrt_abstime>(delay_ms * 1000.f);
+
+	if (target.timestamp_sample <= delay_us) {
+		return;
+	}
+
+	const hrt_abstime sample_time = target.timestamp_sample - delay_us;
+
+	if (_observation_count > 0) {
+		const hrt_abstime previous_sample_time = _observations[_observation_count - 1].sample_time;
+
+		if (sample_time <= previous_sample_time
+		    || sample_time - previous_sample_time < MIN_LOS_OBSERVATION_INTERVAL) {
+			return;
+		}
 	}
 
 	Vector3f los_body;
@@ -1157,7 +1207,27 @@ void DytGuidance::handle_new_target(const dyt_target_s &target)
 		return;
 	}
 
-	push_observation(los_body, target.timestamp_sample, target.frame_dt_s);
+	Quatf attitude_at_sample;
+
+	if (!interpolate_attitude(sample_time, attitude_at_sample)) {
+		return;
+	}
+
+	Vector3f los_ned = Dcmf(attitude_at_sample) * los_body;
+
+	if (!los_ned.isAllFinite() || los_ned.norm_squared() < 1e-6f) {
+		return;
+	}
+
+	los_ned.normalize();
+	_los_body_latest = los_body;
+
+	if (_observation_count > 0) {
+		_last_los_observation_dt_s = (sample_time - _observations[_observation_count - 1].sample_time) * 1e-6f;
+	}
+
+	_last_accepted_los_receive_time = target.timestamp_sample;
+	push_observation(los_ned, sample_time);
 }
 
 bool DytGuidance::build_los_body(const dyt_target_s &target, Vector3f &los_body) const
@@ -1193,20 +1263,111 @@ bool DytGuidance::build_los_body(const dyt_target_s &target, Vector3f &los_body)
 	return true;
 }
 
-void DytGuidance::push_observation(const Vector3f &los_body, hrt_abstime sample_time, float frame_dt_s)
+void DytGuidance::record_attitude_sample(const vehicle_attitude_s &attitude)
+{
+	const hrt_abstime sample_time = attitude.timestamp_sample != 0 ? attitude.timestamp_sample : attitude.timestamp;
+	Quatf q(attitude.q);
+
+	if (sample_time == 0 || sample_time <= _last_attitude_sample_time || !q.isAllFinite()
+	    || q.norm_squared() < 1e-6f) {
+		return;
+	}
+
+	q.normalize();
+
+	if (_attitude_reset_counter_initialized && attitude.quat_reset_counter != _attitude_reset_counter) {
+		_attitude_history_count = 0;
+		_attitude_history_next = 0;
+	}
+
+	_attitude_reset_counter = attitude.quat_reset_counter;
+	_attitude_reset_counter_initialized = true;
+	_attitude_history[_attitude_history_next] = {sample_time, q};
+	_attitude_history_next = (_attitude_history_next + 1) % ATTITUDE_HISTORY_LEN;
+	_attitude_history_count = math::min(_attitude_history_count + 1, ATTITUDE_HISTORY_LEN);
+	_last_attitude_sample_time = sample_time;
+}
+
+bool DytGuidance::interpolate_attitude(hrt_abstime sample_time, Quatf &attitude) const
+{
+	if (_attitude_history_count <= 0 || sample_time == 0) {
+		return false;
+	}
+
+	const int oldest_index = _attitude_history_count < ATTITUDE_HISTORY_LEN ? 0 : _attitude_history_next;
+	const int newest_index = (oldest_index + _attitude_history_count - 1) % ATTITUDE_HISTORY_LEN;
+	const AttitudeHistorySample &oldest = _attitude_history[oldest_index];
+	const AttitudeHistorySample &newest = _attitude_history[newest_index];
+
+	if (sample_time < oldest.sample_time) {
+		return false;
+	}
+
+	if (sample_time > newest.sample_time) {
+		if (sample_time - newest.sample_time <= ATTITUDE_EXTRAPOLATION_LIMIT) {
+			attitude = newest.attitude;
+			return true;
+		}
+
+		return false;
+	}
+
+	if (sample_time == oldest.sample_time || _attitude_history_count == 1) {
+		attitude = oldest.attitude;
+		return true;
+	}
+
+	for (int i = 1; i < _attitude_history_count; ++i) {
+		const int before_index = (oldest_index + i - 1) % ATTITUDE_HISTORY_LEN;
+		const int after_index = (oldest_index + i) % ATTITUDE_HISTORY_LEN;
+		const AttitudeHistorySample &before = _attitude_history[before_index];
+		const AttitudeHistorySample &after = _attitude_history[after_index];
+
+		if (sample_time > after.sample_time) {
+			continue;
+		}
+
+		const hrt_abstime span = after.sample_time - before.sample_time;
+
+		if (span == 0) {
+			return false;
+		}
+
+		const float ratio = static_cast<float>(sample_time - before.sample_time) / static_cast<float>(span);
+		Quatf q_after = after.attitude;
+
+		if (before.attitude.dot(q_after) < 0.f) {
+			q_after *= -1.f;
+		}
+
+		for (int axis = 0; axis < 4; ++axis) {
+			attitude(axis) = before.attitude(axis) * (1.f - ratio) + q_after(axis) * ratio;
+		}
+
+		if (!attitude.isAllFinite() || attitude.norm_squared() < 1e-6f) {
+			return false;
+		}
+
+		attitude.normalize();
+		return true;
+	}
+
+	attitude = newest.attitude;
+	return true;
+}
+
+void DytGuidance::push_observation(const Vector3f &los_ned, hrt_abstime sample_time)
 {
 	if (_observation_count < OBS_BUFFER_LEN) {
-		_observations[_observation_count++] = {sample_time, los_body, frame_dt_s};
+		_observations[_observation_count++] = {sample_time, los_ned};
 
 	} else {
 		for (int i = 1; i < OBS_BUFFER_LEN; ++i) {
 			_observations[i - 1] = _observations[i];
 		}
 
-		_observations[OBS_BUFFER_LEN - 1] = {sample_time, los_body, frame_dt_s};
+		_observations[OBS_BUFFER_LEN - 1] = {sample_time, los_ned};
 	}
-
-	_los_body_latest = los_body;
 }
 
 void DytGuidance::clear_observations()
@@ -1218,11 +1379,14 @@ void DytGuidance::clear_observations()
 	}
 
 	_los_filtered.zero();
-	_prev_los_filtered.zero();
 	_omega_los.zero();
 	_los_ned.zero();
+	_los_body_latest.zero();
 	_los_filter_initialized = false;
 	_prev_los_update = 0;
+	_last_processed_los_sample_time = 0;
+	_last_accepted_los_receive_time = 0;
+	_last_los_observation_dt_s = NAN;
 	_last_track_setpoint_time = 0;
 }
 
@@ -1232,56 +1396,62 @@ bool DytGuidance::update_los_estimate(hrt_abstime now)
 		return false;
 	}
 
-	Vector3f los_body = _observations[_observation_count - 1].los_body;
-
-	if (_observation_count >= 2) {
-		const LosObservation &latest = _observations[_observation_count - 1];
-		const LosObservation &previous = _observations[_observation_count - 2];
-		const float dt_obs = (latest.sample_time - previous.sample_time) * 1e-6f;
-
-		if (dt_obs > 0.002f) {
-			const Vector3f du_body = (latest.los_body - previous.los_body) / dt_obs;
-			const float dt_pred = math::constrain((now - latest.sample_time) * 1e-6f, 0.f, _param_pred_max.get());
-			los_body = latest.los_body + du_body * dt_pred;
-		}
-	}
-
-	if (!PX4_ISFINITE(los_body(0)) || !PX4_ISFINITE(los_body(1)) || !PX4_ISFINITE(los_body(2))
-	    || los_body.norm_squared() < 1e-6f) {
-		return false;
-	}
-
-	los_body.normalize();
-
-	const Dcmf body_to_ned(Quatf(_vehicle_attitude.q));
-	const Vector3f los_raw = body_to_ned * los_body;
+	const LosObservation &latest = _observations[_observation_count - 1];
 
 	if (!_los_filter_initialized) {
-		_los_filtered = los_raw;
-		_prev_los_filtered = los_raw;
-		_prev_los_update = now;
+		_los_filtered = latest.los_ned;
+		_prev_los_update = latest.sample_time;
+		_last_processed_los_sample_time = latest.sample_time;
 		_omega_los.zero();
 		_los_filter_initialized = true;
 
-	} else {
+	} else if (latest.sample_time != _last_processed_los_sample_time) {
+		if (latest.sample_time <= _prev_los_update) {
+			return false;
+		}
+
+		const float dt_obs = (latest.sample_time - _prev_los_update) * 1e-6f;
+		const Vector3f previous_filtered = _los_filtered;
 		const float alpha = math::constrain(_param_lpf_alpha.get(), 0.f, 0.99f);
-		_los_filtered = _los_filtered * alpha + los_raw * (1.f - alpha);
+		_los_filtered = previous_filtered * alpha + latest.los_ned * (1.f - alpha);
 
 		if (_los_filtered.norm_squared() > 1e-6f) {
 			_los_filtered.normalize();
 		}
 
-		const float dt = (now - _prev_los_update) * 1e-6f;
+		const float configured_max_gap_s = _param_max_gap.get();
+		const bool observation_interval_valid = PX4_ISFINITE(configured_max_gap_s)
+						&& dt_obs >= MIN_LOS_OBSERVATION_INTERVAL * 1e-6f
+						&& dt_obs <= configured_max_gap_s;
 
-		if (dt > 0.005f) {
-			const Vector3f du_dt = (_los_filtered - _prev_los_filtered) / dt;
+		if (observation_interval_valid) {
+			const Vector3f du_dt = (_los_filtered - previous_filtered) / dt_obs;
 			_omega_los = _los_filtered.cross(du_dt);
-			_prev_los_filtered = _los_filtered;
-			_prev_los_update = now;
+
+		} else {
+			_omega_los.zero();
 		}
+
+		_prev_los_update = latest.sample_time;
+		_last_processed_los_sample_time = latest.sample_time;
 	}
 
-	_los_ned = _los_filtered;
+	Vector3f los_predicted = _los_filtered;
+
+	if (now > _prev_los_update) {
+		const float configured_prediction_s = _param_pred_max.get();
+		const float max_prediction_s = PX4_ISFINITE(configured_prediction_s) ? math::max(configured_prediction_s, 0.f) : 0.f;
+		const float dt_pred = math::constrain((now - _prev_los_update) * 1e-6f, 0.f,
+				      max_prediction_s);
+		los_predicted += _omega_los.cross(_los_filtered) * dt_pred;
+	}
+
+	if (!los_predicted.isAllFinite() || los_predicted.norm_squared() < 1e-6f) {
+		return false;
+	}
+
+	los_predicted.normalize();
+	_los_ned = los_predicted;
 	return true;
 }
 
@@ -1398,7 +1568,12 @@ bool DytGuidance::target_lock_candidate() const
 
 bool DytGuidance::target_usable() const
 {
-	return target_locked() && target_fresh() && target_geometry_valid() && _observation_count > 0;
+	const hrt_abstime now = hrt_absolute_time();
+	const bool observation_fresh = _last_accepted_los_receive_time != 0
+				       && now >= _last_accepted_los_receive_time
+				       && (now - _last_accepted_los_receive_time) * 1e-6f <= _param_max_age.get();
+
+	return target_locked() && target_fresh() && target_geometry_valid() && _observation_count > 0 && observation_fresh;
 }
 
 bool DytGuidance::intercept_allowed() const
@@ -1411,7 +1586,10 @@ bool DytGuidance::intercept_allowed() const
 		return false;
 	}
 
-	if (_last_target.frame_dt_s > _param_max_gap.get()) {
+	const float configured_max_gap_s = _param_max_gap.get();
+
+	if (!PX4_ISFINITE(_last_los_observation_dt_s) || !PX4_ISFINITE(configured_max_gap_s)
+	    || _last_los_observation_dt_s > configured_max_gap_s) {
 		return false;
 	}
 
@@ -2703,9 +2881,9 @@ void DytGuidance::publish_status()
 	status.laser_closing_speed_m_s = _fusion_laser_closing_speed_m_s;
 	status.image_distance_bias_m = _fusion_distance_bias_m;
 	status.image_speed_bias_m_s = _fusion_speed_bias_m_s;
-	status.los_age_s = _have_target && _last_target.timestamp_sample > 0
-			   ? (hrt_absolute_time() - _last_target.timestamp_sample) * 1e-6f : NAN;
-	status.frame_dt_s = _have_target ? _last_target.frame_dt_s : NAN;
+	status.los_age_s = _los_filter_initialized && _prev_los_update > 0 && now >= _prev_los_update
+			   ? (now - _prev_los_update) * 1e-6f : NAN;
+	status.frame_dt_s = PX4_ISFINITE(_last_los_observation_dt_s) ? _last_los_observation_dt_s : NAN;
 	status.delay_s = _param_delay_ms.get() * 1e-3f;
 	_los_ned.copyTo(status.los_ned);
 	_omega_los.copyTo(status.omega_los_ned);

@@ -134,7 +134,10 @@ private:
 					 | (target.servo_fault ? 1u << 9 : 0u)
 					 | (target.image_board_fault ? 1u << 10 : 0u);
 			msg.tracking_state = target.tracking_state;
-			msg.video_source = target.video_source;
+			// Expose the payload's raw image-source status to the ground station:
+			// 0x01 visible, 0x02 infrared. Keep target.video_source as the
+			// internal four-source enum used by flight-side processing.
+			msg.video_source = target.status3;
 			msg.tracking_algorithm = target.tracking_algorithm;
 			msg.status1 = target.status1;
 			msg.status2 = target.status2;
