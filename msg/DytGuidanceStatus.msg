@@ -33,10 +33,22 @@ uint8 COMMAND_RESULT_ACCEPTED = 2
 uint8 COMMAND_RESULT_DENIED = 3
 uint8 COMMAND_RESULT_FAILED = 4
 
+uint8 CONTROL_MODE_MANUAL = 0
+uint8 CONTROL_MODE_SEMI_AUTO = 1
+uint8 CONTROL_MODE_FULL_AUTO = 2
+
+uint8 SEMI_STATE_DISABLED = 0
+uint8 SEMI_STATE_IDLE = 1
+uint8 SEMI_STATE_LOCK_REQUESTED = 2
+uint8 SEMI_STATE_LOCKED_WAIT_CONFIRM = 3
+uint8 SEMI_STATE_GUIDANCE_ACTIVE = 4
+
 uint32 command_sequence
 uint32 net_trigger_count
 
 uint8 vehicle_type
+uint8 control_mode
+uint8 semi_auto_state
 uint8 guidance_phase
 uint8 gcs_phase_request           # accepted GCS phase request controlling the modules, 0 if none
 uint8 command_phase               # phase carried by the latest received GCS command

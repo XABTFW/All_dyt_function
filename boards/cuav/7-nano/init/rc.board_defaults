@@ -54,9 +54,6 @@ param set-default DYTG_ALP_MAX 45
 # 旧版俯仰修正生效的最小速度，单位 m/s；当前控制不使用。
 param set-default DYTG_ALP_VMIN 1
 
-# 自动激活制导所需的连续候选目标帧数。
-param set-default DYTG_AUTO_N 3
-
 # 重新锁定前云台回中后的稳定等待时间，单位 ms。
 param set-default DYTG_CTRMS 400
 # 导引头图像、遥测与控制链路的固定延迟，单位 ms。
@@ -79,8 +76,6 @@ param set-default DYTG_KA_INT 2
 param set-default DYTG_KV_FOL 0.800000012
 # 拦截模式的速度阻尼增益。
 param set-default DYTG_KV_INT 1.20000005
-# 从搜索进入锁定跟踪所需的连续锁定帧数。
-param set-default DYTG_LOCK_N 2
 # 丢失目标后保持或搜索的总超时时间，单位 ms。
 param set-default DYTG_LOSTMS 240000
 # 目标视线 LOS 的低通滤波系数。
@@ -121,8 +116,6 @@ param set-default DYTG_POFF 0
 param set-default DYTG_PREDMAX 0.0299999993
 # 设置导引头俯仰角的符号方向。
 param set-default DYTG_PSIGN 1
-# 丢失目标后恢复跟踪所需的连续锁定帧数。
-param set-default DYTG_RELOCKN 20
 # 设置导引头滚转角零位偏移，单位度。
 param set-default DYTG_ROFF 0
 # 设置导引头滚转角的符号方向。
@@ -301,6 +294,7 @@ param set-default DYTG_MNT_MODE 0
 # 选择中途制导目标高度的解释方式。
 param set-default DYTG_ALT_MODE 1
 param set-default DYTG_AUTO_EN 0
+param set-default DYTG_MODE 0
 
 param set-default DYTG_ACT_AUX -1
 # 启用自定义通信紧急处置模块。
@@ -456,7 +450,7 @@ param set-default MPC_LAND_RADIUS 1000
 # 控制自动着陆过程中是否允许摇杆修正位置和航向。
 param set-default MPC_LAND_RC_HELP 0
 # 设置正常着陆下降速度，单位 m/s。
-param set-default MPC_LAND_SPEED 0.699999988
+param set-default MPC_LAND_SPEED 0.7
 # 设置 Stabilized 模式最低总推力。
 param set-default MPC_MANTHR_MIN 0.0799999982
 # 限制 Stabilized、Altitude 模式的人工最大倾角，单位度。
@@ -492,11 +486,11 @@ param set-default MPC_VELD_LP 5
 # 设置速度信号低通滤波截止频率，单位 Hz；0 表示关闭。
 param set-default MPC_VEL_LP 0
 # 限制 Position 模式最大人工水平速度，单位 m/s。
-param set-default MPC_VEL_MANUAL 6
+param set-default MPC_VEL_MANUAL 60
 # 限制 Position 模式最大后退速度；负值表示使用人工总上限。
-param set-default MPC_VEL_MAN_BACK 4
+param set-default MPC_VEL_MAN_BACK -1
 # 限制 Position 模式最大侧向速度；负值表示使用人工总上限。
-param set-default MPC_VEL_MAN_SIDE 4
+param set-default MPC_VEL_MAN_SIDE -1
 # 设置速度陷波滤波器带宽，单位 Hz。
 param set-default MPC_VEL_NF_BW 5
 # 设置速度陷波滤波器中心频率，单位 Hz；0 表示关闭。
@@ -620,6 +614,9 @@ param set-default PWM_MAIN_FAIL6 1000
 param set-default PWM_MAIN_REV 32
 param set-default PD_GRIPPER_TYPE 0
 
+#手动速度
+param set-default MPC_MAN_Z_DN 4
+
 #融合测距
 param set-default DYTG_FUS_EN 1
 
@@ -644,7 +641,7 @@ param set-default CEM_BAT_THR 0.2
 # 设置 USB MAVLink 消息流模式；5 表示配置模式。
 param set-default USB_MAV_MODE 5
 
-# GPS is connected through CAN. Reserve GPS1 for the forward-facing SDM50.
+# GPS is connected through CAN. Integrated SDM50 reports arrive on TEL2.
 # 设置主 GPS 驱动占用的串口；0 表示禁用。
 param set-default GPS_1_CONFIG 0
 

@@ -9,7 +9,7 @@
 当前代码中存在两种通过 MAVLink 连接发起导引头操作的方式：
 
 1. **自带远程终端方式**：标准 MAVLink `SERIAL_CONTROL(126)` 只负责把 `dyt_gimbal` NSH 命令文本送到飞控执行；光源、激光、AI、OSD、云台角度和跟踪等操作当前都使用这种间接方式。
-2. **专用结构化消息方式**：自定义 MAVLink `DYT_TRACK_POINT_COMMAND(12935)` 用于地面站点击图像像素后请求导引头跟踪，并用 `DYT_TRACK_POINT_ACK(12936)` 返回飞控接收结果。
+2. **专用结构化消息方式**：自定义 MAVLink `DYT_TRACK_POINT_COMMAND(12935)` 用于点选并锁定目标，`DYT_GUIDANCE_COMMAND(12925)` 用于确认开始制导，飞控分别通过 `DYT_TRACK_POINT_ACK(12936)` 和 `DYT_SYSTEM_STATUS(12926)` 反馈。
 
 > 当前没有专用的 `DYT_PAYLOAD_COMMAND` 自定义 MAVLink 消息。除像素跟踪外，其他导引头操作都是“MAVLink 自带远程 Shell + 飞控本地 `dyt_gimbal` 命令”的间接控制，不能称为专用导引头 MAVLink 控制协议。
 
@@ -18,6 +18,8 @@
 | ID | 消息 | 方向 | Payload | CRC Extra | 用途 |
 | ---: | --- | --- | ---: | ---: | --- |
 | 126 | `SERIAL_CONTROL` | GCS <-> FC | 81 B（包含 MAVLink 2 扩展字段） | 220 | 发送 `dyt_gimbal` Shell 文本及接收 Shell 输出。 |
+| 12925 | `DYT_GUIDANCE_COMMAND` | GCS -> FC | 7 B | 169 | 半自动锁定后确认开始末制导。 |
+| 12926 | `DYT_SYSTEM_STATUS` | FC -> GCS | 91–93 B | 0 | 反馈控制模式、半自动状态和制导命令结果。 |
 | 12927 | `DYT_TARGET_STATUS` | FC -> GCS | 83 B | 157 | 导引头跟踪、光源、云台、LOS 和激光状态。 |
 | 12928 | `DYT_STATUS_REPLY` | FC -> GCS | 29 B | 227 | 导引头原始状态/回复转发。 |
 | 12935 | `DYT_TRACK_POINT_COMMAND` | GCS -> FC | 14 B | 183 | 下发图像像素跟踪点。 |
@@ -107,7 +109,38 @@
 
 ## 6. 专用像素跟踪 MAVLink
 
-### 6.1 DYT_TRACK_POINT_COMMAND(12935)
+### 6.1 三种控制模式
+
+地面站通过标准 MAVLink `PARAM_SET` 设置参数 `DYTG_MODE`：
+
+```text
+target_system=<飞控 sysid>
+target_component=1
+param_id="DYTG_MODE"
+param_value=0.0 / 1.0 / 2.0
+param_type=MAV_PARAM_TYPE_INT32
+```
+
+| `DYTG_MODE` | 模式 | 飞控行为 |
+| ---: | --- | --- |
+| 0 | 手动 | 自动使 `DYTG_AUTO_EN=0`，不根据识别结果自动进入制导。 |
+| 1 | 半自动 | 自动使 `DYTG_AUTO_EN=0`；点选后只保持导引头目标锁定，飞控不接管飞机，收到确认后才进入末制导。 |
+| 2 | 全自动 | 自动使 `DYTG_AUTO_EN=1`，使用稳定识别和自动锁定逻辑。 |
+
+`DYTG_AUTO_EN` 现在是兼容镜像参数，地面站不要再直接写它。
+
+### 6.2 半自动地面站流程
+
+1. 用 `PARAM_SET` 设置 `DYTG_MODE=1`，等待参数回传确认。
+2. 继续使用现有 `DYT_TRACK_POINT_COMMAND(12935)` 发送点选坐标，不需要新的点选接口。
+3. `DYT_TRACK_POINT_ACK.result == MAV_RESULT_ACCEPTED` 只表示飞控已接收点选命令。
+4. 监听 `DYT_SYSTEM_STATUS`；当 `control_mode=1` 且 `semi_auto_state=3` 时，表示导引头已锁定并等待确认。此时 `status_flags bit3=0`，飞控不向目标飞。
+5. 操作员点击“确认开始”后，发送 `DYT_GUIDANCE_COMMAND(12925)`：`request_id`为非 0 递增序号，`target_system`为目标飞控 sysid，`target_component=1`，`phase=3`。
+6. 等待 `DYT_SYSTEM_STATUS.command_sequence == request_id`；`command_result=1` 表示正在切换，`command_result=2` 表示已进入末制导。此时 `semi_auto_state=4`，`guidance_phase=3`。
+
+如果导引头尚未真正锁定就发送确认，飞控返回 `command_result=3` 并且不进入制导。
+
+### 6.3 DYT_TRACK_POINT_COMMAND(12935)
 
 方向：`GCS -> FC`。
 
@@ -138,7 +171,7 @@ master.mav.dyt_track_point_command_send(
 )
 ```
 
-### 6.2 DYT_TRACK_POINT_ACK(12936)
+### 6.4 DYT_TRACK_POINT_ACK(12936)
 
 方向：`FC -> GCS`。
 
@@ -170,7 +203,3 @@ master.mav.dyt_track_point_command_send(
 tracking_state == 1
 target_flags & 0x0001 != 0
 ```
-
-
-
-

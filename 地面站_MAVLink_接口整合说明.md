@@ -20,7 +20,7 @@
 - 地面站和飞控必须使用同一份修改后的 `common.xml` 生成代码，否则消息 ID、字段布局和 CRC 不匹配。
 - 当前主 dialect 为 `common`。
 - 多机情况下以 MAVLink 包头的 `sysid` 区分飞机；不要只依赖消息体内的 `mavid`。
-- `DYT_SYSTEM_STATUS` 自动生成的 CRC Extra 确实是 `0`，这不是“未配置 CRC”。
+- `DYT_SYSTEM_STATUS` 的原始 Payload 为 91 B；新模式反馈位于 MAVLink 2 扩展区，最大 Payload 为 93 B，CRC Extra 仍为 `0`。
 - 不建议地面站手工按 XML 顺序拼 payload；MAVLink 生成器会按字段类型重排线上的字段布局。
 
 生成 C 头文件示例：
@@ -63,7 +63,7 @@ python3 pymavlink/tools/mavgen.py \
 | `12923` | `SWARM_START_FLAG` | `GCS -> FC` | 5 B | 125 | 命令触发 | 集群起飞/降落/暂停/继续 |
 | `12924` | `SWARM_OPERATION_ACK` | `FC -> GCS` | 19 B | 71 | 状态更新触发，流上限 10 Hz | 集群操作结果 |
 | `12925` | `DYT_GUIDANCE_COMMAND` | `GCS -> FC` | 7 B | 169 | 命令触发 | 请求进入中制导或末制导 |
-| `12926` | `DYT_SYSTEM_STATUS` | `FC -> GCS` | 91 B | 0 | DYT telemetry 流 10 Hz | 飞机类型、制导阶段、命令结果、网捕状态、末制导控制量 |
+| `12926` | `DYT_SYSTEM_STATUS` | `FC -> GCS` | 91–93 B | 0 | DYT telemetry 流 10 Hz | 飞机类型、控制模式、制导阶段、命令结果、网捕状态、末制导控制量 |
 | `12927` | `DYT_TARGET_STATUS` | `FC -> GCS` | 83 B | 157 | DYT telemetry 流 10 Hz，上游更新触发 | 导引头目标、云台和链路遥测 |
 | `12928` | `DYT_STATUS_REPLY` | `FC -> GCS` | 29 B | 227 | 导引头回复更新触发 | 导引头原始命令回复 |
 | `12931` | `SWARM_MISSION_ITEM` | `FC <-> FC`，GCS 可收发 | 60 B | 39 | 5 Hz，上游更新触发 | 集群任务航点同步 |
@@ -263,6 +263,8 @@ python3 pymavlink/tools/mavgen.py \
 | `yaw_rate_sp` | `float` | rad/s | yaw-rate setpoint。 |
 | `status_flags` | `uint16_t` | bitmask | 综合状态位，见下表。 |
 | `vehicle_type` | `uint8_t` | enum | 飞机类型。 |
+| `control_mode` | `uint8_t` | enum | `0=手动`、`1=半自动`、`2=全自动`。 |
+| `semi_auto_state` | `uint8_t` | enum | `0=禁用`、`1=空闲`、`2=已点选/请求锁定`、`3=已锁定等待确认`、`4=制导已激活`。 |
 | `guidance_phase` | `uint8_t` | enum | 飞控实际判断的全局导引阶段。 |
 | `gcs_phase_request` | `uint8_t` | enum | 当前保留的 GCS 阶段请求，0 表示没有。 |
 | `command_phase` | `uint8_t` | enum | 最近一条 GCS 命令携带的阶段。 |
@@ -432,7 +434,7 @@ python3 pymavlink/tools/mavgen.py \
 
 当前 `DytCommand.msg` 定义了以下命令，导引头驱动从 uORB `dyt_command` 接收后转换为 DYT RS422 协议。
 
-> 当前重要限制：固件尚未定义或接收“地面站 -> 飞控”的 `DYT_COMMAND` MAVLink 消息，也没有把 `dyt_command` 镜像到 MAVLink。因此下表是飞控内部/后续扩展接口参考，地面站现在不能直接发送这些命令。当前地面站唯一可直接发送的 DYT 自定义命令是 `DYT_GUIDANCE_COMMAND(12925)`。
+> 当前重要限制：固件尚未定义通用的“地面站 -> 飞控” `DYT_COMMAND` MAVLink 消息。地面站可直接发送 `DYT_GUIDANCE_COMMAND(12925)` 和专用点选命令 `DYT_TRACK_POINT_COMMAND(12935)`；其他导引头内部命令仍需通过远程 Shell 间接执行。
 
 ### 通用字段
 

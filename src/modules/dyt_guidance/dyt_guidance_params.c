@@ -192,12 +192,32 @@ PARAM_DEFINE_INT32(DYTG_MNT_MODE, 1);
 PARAM_DEFINE_FLOAT(DYTG_STK_TK, 0.30f);
 
 /**
+ * DYT target-control mode
+ *
+ * Manual mode disables automatic target activation. Semi-automatic mode lets
+ * the ground station select and lock a target, then waits for an explicit
+ * terminal-guidance confirmation. Full automatic mode enables automatic target
+ * activation after the recognition hold time.
+ *
+ * @value 0 Manual
+ * @value 1 Semi-automatic
+ * @value 2 Full automatic
+ * @min 0
+ * @max 2
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYTG_MODE, 0);
+
+/**
  * Enable automatic guidance activation from detected target hints
  *
- * When enabled, no activation AUX/button is required. After DYTG_AUTO_N
- * consecutive servo-status frames report recognition value 100, guidance sends
- * a 0x06 lock request and waits DYTG_LOCK_MS for the payload lock report. It
- * makes at most three lock attempts (the initial request plus two retries).
+ * Compatibility mirror controlled by DYTG_MODE. It is zero in manual and
+ * semi-automatic modes and one in full automatic mode. When enabled, no
+ * activation AUX/button is required. After recognition value
+ * 100 remains continuously valid for 0.3 seconds, guidance starts a
+ * DYTG_LOCK_MS lock window and sends a 0x06 request
+ * every 500 ms. A failed window ends tracking, restarts detection, and requires
+ * recognition to disappear before another automatic attempt.
  * Selecting another flight mode exits the automatic terminal-guidance session.
  * An explicit activation AUX/button rising edge continues to request tracking
  * directly, independently of payload recognition.
@@ -206,24 +226,6 @@ PARAM_DEFINE_FLOAT(DYTG_STK_TK, 0.30f);
  * @group DYT Guidance
  */
 PARAM_DEFINE_INT32(DYTG_AUTO_EN, 0);
-
-/**
- * Consecutive candidate frames for automatic guidance activation
- *
- * @min 1
- * @max 30
- * @group DYT Guidance
- */
-PARAM_DEFINE_INT32(DYTG_AUTO_N, 5);
-
-/**
- * Consecutive lock frames to enter tracking
- *
- * @min 1
- * @max 20
- * @group DYT Guidance
- */
-PARAM_DEFINE_INT32(DYTG_LOCK_N, 4);
 
 /**
  * Lock request protection time
@@ -238,15 +240,6 @@ PARAM_DEFINE_INT32(DYTG_LOCK_N, 4);
  * @group DYT Guidance
  */
 PARAM_DEFINE_INT32(DYTG_LOCK_MS, 2000);
-
-/**
- * Consecutive lock frames to recover from lost hold
- *
- * @min 1
- * @max 20
- * @group DYT Guidance
- */
-PARAM_DEFINE_INT32(DYTG_RELOCKN, 3);
 
 /**
  * Search wait timeout

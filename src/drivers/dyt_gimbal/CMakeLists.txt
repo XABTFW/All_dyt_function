@@ -3,6 +3,8 @@ px4_add_module(
 	MAIN dyt_gimbal
 	SRCS
 		dyt_gimbal.cpp
+	DEPENDS
+		drivers_rangefinder
 	)
 
 px4_add_unit_gtest(SRC DytPixelLosTest.cpp)

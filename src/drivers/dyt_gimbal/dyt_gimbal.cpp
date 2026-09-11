@@ -17,6 +17,9 @@
 
 #include "DytPixelLos.hpp"
 
+#include <drivers/drv_sensor.h>
+#include <lib/drivers/device/Device.hpp>
+#include <lib/drivers/rangefinder/PX4Rangefinder.hpp>
 #include <lib/mathlib/mathlib.h>
 #include <px4_platform_common/getopt.h>
 #include <px4_platform_common/log.h>
@@ -30,6 +33,8 @@
 #include <uORB/topics/dyt_status_reply.h>
 #include <uORB/topics/dyt_target.h>
 #include <uORB/topics/parameter_update.h>
+#include <uORB/topics/sdm50_status.h>
+#include <uORB/topics/vehicle_status.h>
 
 using namespace time_literals;
 
@@ -65,6 +70,8 @@ private:
 	static constexpr uint8_t LASER_FRAME_DATA_LEN{0x0A};
 	static constexpr size_t LASER_FRAME_LEN{14};
 	static constexpr size_t FLIGHT_DATA_FRAME_LEN{42};
+	static constexpr size_t TX_QUEUE_DEPTH{16};
+	static constexpr size_t MAX_TX_FRAMES_PER_COMMAND{3};
 	static constexpr hrt_abstime LASER_FRESHNESS{500_ms};
 
 	static constexpr uint8_t MODE_DISABLE{0x00};
@@ -89,6 +96,7 @@ private:
 	static constexpr hrt_abstime IMAGE_SOURCE_CONFIRM_TIMEOUT{1_s};
 	static constexpr uint8_t TRACKER_OSD_ENABLE{0x07};
 	static constexpr uint8_t TRACKER_OSD_DISABLE{0x08};
+	static constexpr uint8_t TRACKER_DETECTION_START{0x2B};
 	static constexpr uint8_t LASER_POWER_ON{0x01};
 	static constexpr uint8_t LASER_POWER_OFF{0x02};
 	static constexpr uint8_t LASER_CONTINUOUS_ON{0x05};
@@ -100,6 +108,7 @@ private:
 	int configure_serial(int fd, int baud);
 	speed_t baud_to_speed(int baud) const;
 	void update_params_if_needed();
+	void update_arming_state();
 
 	void read_serial();
 	void process_byte(uint8_t byte);
@@ -127,6 +136,9 @@ private:
 	bool send_laser_command(uint8_t control);
 	bool send_flight_data(const dyt_command_s &cmd);
 	bool write_frame(const uint8_t *buffer, size_t buffer_len);
+	bool drain_tx_queue();
+	void reset_tx_queue();
+	bool send_detection_start_if_needed();
 	void send_startup_home_if_needed(hrt_abstime now);
 
 	void publish_shell_command(uint8_t command);
@@ -151,6 +163,15 @@ private:
 	uint8_t _rx_frame[MAX_FRAME_LEN]{};
 	size_t _rx_index{0};
 	size_t _expected_frame_len{0};
+	struct TxFrame {
+		uint8_t data[MAX_FRAME_LEN]{};
+		uint16_t length{0};
+		uint16_t offset{0};
+	};
+	TxFrame _tx_queue[TX_QUEUE_DEPTH]{};
+	size_t _tx_queue_head{0};
+	size_t _tx_queue_tail{0};
+	size_t _tx_queue_count{0};
 
 	hrt_abstime _last_open_attempt{0};
 	hrt_abstime _last_servo_time{0};
@@ -179,7 +200,15 @@ private:
 	float _visible_horizontal_fov_deg{NAN};
 	float _infrared_horizontal_fov_deg{NAN};
 	float _last_range_m{NAN};
+	PX4Rangefinder _sdm50_rangefinder{0, distance_sensor_s::ROTATION_FORWARD_FACING};
+	uint32_t _sdm50_device_id{0};
+	hrt_abstime _last_velocity_sample{0};
+	float _last_velocity_distance_m{NAN};
+	float _closing_speed_m_s{NAN};
 	bool _startup_home_sent{false};
+	bool _armed{false};
+	bool _detection_start_pending{false};
+	size_t _detection_start_tx_offset{0};
 	bool _image_source_confirmation_pending{false};
 	bool _image_source_confirmation_warned{false};
 	uint8_t _requested_image_status{0};
@@ -189,9 +218,11 @@ private:
 
 	uORB::Subscription _dyt_command_sub{ORB_ID(dyt_command)};
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
+	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::Publication<dyt_command_s> _dyt_command_pub{ORB_ID(dyt_command)};
 	uORB::Publication<dyt_status_reply_s> _dyt_status_reply_pub{ORB_ID(dyt_status_reply)};
 	uORB::Publication<dyt_target_s> _dyt_target_pub{ORB_ID(dyt_target)};
+	uORB::Publication<sdm50_status_s> _sdm50_status_pub{ORB_ID(sdm50_status)};
 
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::DYT_BAUD>) _param_dyt_baud,
@@ -222,6 +253,15 @@ DytGimbal::DytGimbal(const char *device_path) :
 	_last_target.range_m = NAN;
 	_last_target.bbox_width_px = NAN;
 	_last_target.bbox_height_px = NAN;
+	device::Device::DeviceId device_id{};
+	device_id.devid_s.devtype = DRV_DIST_DEVTYPE_SDM50;
+	device_id.devid_s.bus_type = device::Device::DeviceBusType_SERIAL;
+	_sdm50_device_id = device_id.devid;
+	_sdm50_rangefinder.set_device_id(_sdm50_device_id);
+	_sdm50_rangefinder.set_rangefinder_type(distance_sensor_s::MAV_DISTANCE_SENSOR_LASER);
+	_sdm50_rangefinder.set_min_distance(0.05f);
+	_sdm50_rangefinder.set_max_distance(50.f);
+	_sdm50_rangefinder.set_fov(math::radians(1.7f));
 }
 
 DytGimbal::~DytGimbal()
@@ -244,6 +284,8 @@ int DytGimbal::print_status()
 void DytGimbal::show_status()
 {
 	PX4_INFO("protocol: Tweety V2.0.9.6 (0x55 0xAA)");
+	PX4_INFO("SDM50: automatic laser reports on shared UART, range %.3f m, closing speed %.2f m/s",
+		 static_cast<double>(_last_range_m), static_cast<double>(_closing_speed_m_s));
 	PX4_INFO("port: %s fd: %d baud: %ld", _device_path, _uart_fd, static_cast<long>(_param_dyt_baud.get()));
 	PX4_INFO("rx bytes: %llu frames: %lu parse/read/write errors: %u/%u/%u",
 		 static_cast<unsigned long long>(_rx_byte_count), static_cast<unsigned long>(_frame_counter),
@@ -264,9 +306,10 @@ void DytGimbal::show_status()
 	PX4_INFO("image source: raw=0x%02x requested=0x%02x pending=%d zoom=%.1f",
 		 static_cast<unsigned>(_last_target.status3), static_cast<unsigned>(_requested_image_status),
 		 _image_source_confirmation_pending, static_cast<double>(_last_target.zoom_ratio));
-	PX4_INFO("mode control: 0x%02x tx: %lu last command: %u write result/errno: %d/%d",
+	PX4_INFO("mode control: 0x%02x tx: %lu queued: %u last command: %u write result/errno: %d/%d",
 		 static_cast<unsigned>(_mode_control), static_cast<unsigned long>(_command_tx_count),
-		 static_cast<unsigned>(_last_command), _last_write_result, _last_write_errno);
+		 static_cast<unsigned>(_tx_queue_count), static_cast<unsigned>(_last_command), _last_write_result,
+		 _last_write_errno);
 }
 
 void DytGimbal::Run()
@@ -279,6 +322,7 @@ void DytGimbal::Run()
 	}
 
 	update_params_if_needed();
+	update_arming_state();
 	const hrt_abstime now = hrt_absolute_time();
 
 	if (_uart_fd < 0) {
@@ -293,10 +337,27 @@ void DytGimbal::Run()
 		return;
 	}
 
+	// Complete an already-started frame before issuing any other frame. This keeps
+	// short non-blocking writes from interleaving two protocol packets.
+	if (!drain_tx_queue()) {
+		return;
+	}
+
+	const bool tx_queue_busy = _tx_queue_count > 0;
+
+	// Detection start has priority at the next frame boundary. If a queued frame
+	// is still waiting for UART space, do not consume more commands this cycle.
+	if (!tx_queue_busy && !send_detection_start_if_needed()) {
+		return;
+	}
+
 	read_serial();
 	const hrt_abstime now_after_read = hrt_absolute_time();
-	handle_command_updates();
-	send_startup_home_if_needed(now_after_read);
+
+	if (!tx_queue_busy) {
+		handle_command_updates();
+		send_startup_home_if_needed(now_after_read);
+	}
 
 	const hrt_abstime timeout_us = static_cast<hrt_abstime>(math::max(_param_dyt_timeout_ms.get(), int32_t{50})) * 1000ULL;
 	const bool servo_timed_out = _last_servo_time == 0 || now_after_read < _last_servo_time ||
@@ -304,6 +365,22 @@ void DytGimbal::Run()
 
 	if (servo_timed_out) {
 		publish_link_state(now_after_read, dyt_target_s::TRACKING_STATE_TIMEOUT);
+	}
+}
+
+void DytGimbal::update_arming_state()
+{
+	vehicle_status_s vehicle_status{};
+
+	if (_vehicle_status_sub.update(&vehicle_status)) {
+		const bool armed = vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED;
+
+		if (armed && !_armed) {
+			_detection_start_pending = true;
+			_detection_start_tx_offset = 0;
+		}
+
+		_armed = armed;
 	}
 }
 
@@ -335,6 +412,11 @@ bool DytGimbal::open_serial()
 	}
 
 	reset_parser();
+	_last_laser_time = 0;
+	_last_range_m = NAN;
+	_last_velocity_sample = 0;
+	_last_velocity_distance_m = NAN;
+	_closing_speed_m_s = NAN;
 	_last_servo_time = 0;
 	_visible_horizontal_fov_deg = NAN;
 	_infrared_horizontal_fov_deg = NAN;
@@ -343,6 +425,14 @@ bool DytGimbal::open_serial()
 	_mode_control = MODE_DISABLE;
 	memset(_mode_params, 0, sizeof(_mode_params));
 	_startup_home_sent = false;
+
+	if (_armed) {
+		// The gimbal or UART may have restarted in flight. Re-send the start
+		// command after reconnect so target detection is restored.
+		_detection_start_pending = true;
+		_detection_start_tx_offset = 0;
+	}
+
 	_startup_home_time = hrt_absolute_time() +
 		static_cast<hrt_abstime>(math::max(_param_dyt_home_delay_ms.get(), int32_t{0})) * 1000ULL;
 	PX4_INFO("opened %s @ %ld", _device_path, static_cast<long>(_param_dyt_baud.get()));
@@ -355,6 +445,8 @@ void DytGimbal::close_serial()
 		::close(_uart_fd);
 		_uart_fd = -1;
 	}
+
+	reset_tx_queue();
 
 	_image_source_confirmation_pending = false;
 	_image_source_confirmation_warned = false;
@@ -423,7 +515,8 @@ void DytGimbal::read_serial()
 {
 	uint8_t buffer[128]{};
 
-	for (;;) {
+	// Bound work on the shared queue even if the UART is continuously busy.
+	for (unsigned reads = 0; reads < 8; ++reads) {
 		const ssize_t nread = ::read(_uart_fd, buffer, sizeof(buffer));
 
 		if (nread > 0) {
@@ -550,7 +643,6 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.parse_error_count = _parse_error_count;
 	target.self_test_raw = frame[4];
 	const uint16_t recognition_status = read_be_u16(frame, 36);
-	const bool recognition_detected = recognition_status == RECOGNITION_TARGET_DETECTED;
 	target.status1 = recognition_status <= UINT8_MAX ? static_cast<uint8_t>(recognition_status) : UINT8_MAX;
 	target.status2 = frame[31];
 	target.status3 = frame[5];
@@ -589,6 +681,17 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 				       _param_dyt_visible_width_px.get();
 	const int32_t image_height_px = infrared_source ? _param_dyt_infrared_height_px.get() :
 					_param_dyt_visible_height_px.get();
+	const uint16_t bbox_width_px = read_be_u16(frame, 40);
+	const uint16_t bbox_height_px = read_be_u16(frame, 42);
+	const bool bbox_dimensions_valid = image_source_confirmed
+					   && bbox_width_px > 0 && bbox_height_px > 0
+					   && image_width_px > 0 && image_height_px > 0
+					   && bbox_width_px <= static_cast<uint32_t>(image_width_px)
+					   && bbox_height_px <= static_cast<uint32_t>(image_height_px);
+	// Visible and infrared use the same explicit recognition result. Bounding-box
+	// dimensions alone are not sufficient: a fixed tracking gate can also be 64x64.
+	const bool recognition_detected = image_source_confirmed
+					  && recognition_status == RECOGNITION_TARGET_DETECTED;
 	const bool los_valid = dyt::pixelMissToLos(raw_los_x, raw_los_y, horizontal_fov_deg, image_width_px,
 			       image_height_px, _param_dyt_los_scale_deg.get(), target.los_x_rad, target.los_y_rad);
 
@@ -606,13 +709,7 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.motor_on = frame[6] != MODE_DISABLE;
 	target.laser_on = _last_laser_time > 0 && now - _last_laser_time <= LASER_FRESHNESS && PX4_ISFINITE(_last_range_m);
 	target.range_m = target.laser_on ? _last_range_m : NAN;
-	const uint16_t bbox_width_px = read_be_u16(frame, 40);
-	const uint16_t bbox_height_px = read_be_u16(frame, 42);
-	const bool bbox_valid = (recognition_detected || lock_reported) && image_source_confirmed
-				&& bbox_width_px > 0 && bbox_height_px > 0
-				&& image_width_px > 0 && image_height_px > 0
-				&& bbox_width_px <= static_cast<uint32_t>(image_width_px)
-				&& bbox_height_px <= static_cast<uint32_t>(image_height_px);
+	const bool bbox_valid = (recognition_detected || lock_reported) && bbox_dimensions_valid;
 	target.bbox_width_px = bbox_valid ? static_cast<float>(bbox_width_px) : NAN;
 	target.bbox_height_px = bbox_valid ? static_cast<float>(bbox_height_px) : NAN;
 	target.frame_dt_s = _last_servo_time > 0 ? (now - _last_servo_time) * 1e-6f : 0.f;
@@ -665,13 +762,63 @@ void DytGimbal::handle_laser_status(const uint8_t *frame, size_t frame_len, hrt_
 		return;
 	}
 
-	if (frame[4] == 0x01) {
+	// Both automatic (0x00) and requested (0x01) range reports carry
+	// the SDM50 distance in metres as a big-endian float at bytes 7..10.
+	// Self-test/count/settings replies must not enter the range pipeline.
+	if (frame[4] == 0x00 || frame[4] == 0x01) {
 		const float range_m = read_be_float(frame, 7);
+		const bool valid = PX4_ISFINITE(range_m) && range_m >= 0.05f && range_m < 50.f;
 
-		if (PX4_ISFINITE(range_m) && range_m > 0.f) {
+		if (valid) {
+			// Preserve the standalone SDM50 closing-speed estimator: at most
+			// 50 Hz differentiation and a 0.3 s low-pass time constant.
+			bool update_baseline = _last_velocity_sample == 0 || !PX4_ISFINITE(_last_velocity_distance_m);
+
+			if (!update_baseline) {
+				const float dt_s = (now - _last_velocity_sample) * 1e-6f;
+
+				if (dt_s >= 0.02f && dt_s <= 2.5f) {
+					const float raw_speed = (_last_velocity_distance_m - range_m) / dt_s;
+
+					if (PX4_ISFINITE(raw_speed) && fabsf(raw_speed) <= 50.f) {
+						const float alpha = dt_s / (0.3f + dt_s);
+						_closing_speed_m_s = PX4_ISFINITE(_closing_speed_m_s) ?
+							_closing_speed_m_s + alpha * (raw_speed - _closing_speed_m_s) : raw_speed;
+					}
+
+					update_baseline = true;
+
+				} else if (dt_s > 2.5f) {
+					_closing_speed_m_s = NAN;
+					update_baseline = true;
+				}
+			}
+
+			if (update_baseline) {
+				_last_velocity_sample = now;
+				_last_velocity_distance_m = range_m;
+			}
+
 			_last_range_m = range_m;
 			_last_laser_time = now;
+
+		} else {
+			_last_range_m = NAN;
+			_last_laser_time = 0;
+			_last_velocity_sample = 0;
+			_last_velocity_distance_m = NAN;
+			_closing_speed_m_s = NAN;
 		}
+
+		_sdm50_rangefinder.update(now, valid ? range_m : NAN, valid ? 100 : 0);
+		sdm50_status_s status{};
+		status.timestamp = now;
+		status.timestamp_sample = now;
+		status.device_id = _sdm50_device_id;
+		status.distance_m = valid ? range_m : NAN;
+		status.closing_speed_m_s = valid ? _closing_speed_m_s : NAN;
+		status.valid = valid;
+		_sdm50_status_pub.publish(status);
 	}
 
 	publish_generic_reply(frame, frame_len, now);
@@ -759,9 +906,13 @@ void DytGimbal::handle_command_updates()
 {
 	dyt_command_s cmd{};
 
-	while (_dyt_command_sub.update(&cmd)) {
+	while (_tx_queue_count <= TX_QUEUE_DEPTH - MAX_TX_FRAMES_PER_COMMAND && _dyt_command_sub.update(&cmd)) {
 		_startup_home_sent = true;
 		send_protocol_command(cmd);
+
+		if (_uart_fd < 0 || cmd.command == dyt_command_s::CMD_DETECTION_START) {
+			break;
+		}
 	}
 }
 
@@ -769,6 +920,7 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 {
 	_last_command = cmd.command;
 	bool send_mode = false;
+	const bool tracking_mode_guard_active = hrt_absolute_time() < _tracking_mode_guard_until;
 
 	switch (cmd.command) {
 	case dyt_command_s::CMD_AUTO_LOCK:
@@ -791,27 +943,35 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 
 	case dyt_command_s::CMD_NOFOLLOW:
 	case dyt_command_s::CMD_LOCK_VIEW:
-		set_mode(MODE_LOCK);
-		send_mode = true;
+		if (!tracking_mode_guard_active) {
+			set_mode(MODE_LOCK);
+			send_mode = true;
+		}
 		break;
 
 	case dyt_command_s::CMD_YAW_FOLLOW:
-		set_mode(MODE_FOLLOW_ANGLE);
-		send_mode = true;
+		if (!tracking_mode_guard_active) {
+			set_mode(MODE_FOLLOW_ANGLE);
+			send_mode = true;
+		}
 		break;
 
 	case dyt_command_s::CMD_CENTER:
-		set_mode(MODE_HOME);
-		send_mode = true;
+		if (!tracking_mode_guard_active) {
+			set_mode(MODE_HOME);
+			send_mode = true;
+		}
 		break;
 
 	case dyt_command_s::CMD_CENTER_GIMBAL:
-		set_angle_mode(static_cast<float>(cmd.param_x) * 0.01f, static_cast<float>(cmd.param_y) * 0.01f);
-		send_mode = true;
+		if (!tracking_mode_guard_active) {
+			set_angle_mode(static_cast<float>(cmd.param_x) * 0.01f, static_cast<float>(cmd.param_y) * 0.01f);
+			send_mode = true;
+		}
 		break;
 
 	case dyt_command_s::CMD_SET_FRAME_ANGLE:
-		if (hrt_absolute_time() >= _tracking_mode_guard_until) {
+		if (!tracking_mode_guard_active) {
 			set_angle_mode(static_cast<float>(cmd.param_x) * 0.01f, static_cast<float>(cmd.param_y) * 0.01f);
 			send_mode = true;
 		}
@@ -822,8 +982,10 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 		break;
 
 	case dyt_command_s::CMD_SEARCH_RATE:
-		set_scan_mode(cmd);
-		send_mode = true;
+		if (!tracking_mode_guard_active) {
+			set_scan_mode(cmd);
+			send_mode = true;
+		}
 		break;
 
 	case dyt_command_s::CMD_SEND_OWNSHIP_STATE:
@@ -831,14 +993,14 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 		break;
 
 	case dyt_command_s::CMD_GEO_TRACK:
-		if (hrt_absolute_time() >= _tracking_mode_guard_until) {
+		if (!tracking_mode_guard_active) {
 			set_geo_mode(cmd.lat, cmd.lon, cmd.alt);
 			send_mode = true;
 		}
 		break;
 
 	case dyt_command_s::CMD_GEO_TRACK_EXIT:
-		if (hrt_absolute_time() >= _tracking_mode_guard_until) {
+		if (!tracking_mode_guard_active) {
 			set_mode(MODE_LOCK);
 			send_mode = true;
 		}
@@ -911,6 +1073,11 @@ void DytGimbal::send_protocol_command(const dyt_command_s &cmd)
 
 	case dyt_command_s::CMD_OSD_DISABLE:
 		send_tracker_command(TRACKER_OSD_DISABLE);
+		break;
+
+	case dyt_command_s::CMD_DETECTION_START:
+		_detection_start_pending = true;
+		_detection_start_tx_offset = 0;
 		break;
 
 	default:
@@ -1073,22 +1240,122 @@ bool DytGimbal::send_flight_data(const dyt_command_s &cmd)
 
 bool DytGimbal::write_frame(const uint8_t *buffer, size_t buffer_len)
 {
-	if (_uart_fd < 0 || buffer == nullptr || buffer_len == 0) {
+	if (_uart_fd < 0 || buffer == nullptr || buffer_len == 0 || buffer_len > MAX_FRAME_LEN) {
 		return false;
 	}
 
-	_last_write_errno = 0;
-	const ssize_t written = ::write(_uart_fd, buffer, buffer_len);
-	_last_write_result = static_cast<int>(written);
-
-	if (written != static_cast<ssize_t>(buffer_len)) {
-		_last_write_errno = written < 0 ? errno : 0;
+	if (_tx_queue_count >= TX_QUEUE_DEPTH) {
+		_last_write_result = -1;
+		_last_write_errno = ENOSPC;
 		++_write_error_count;
 		return false;
 	}
 
+	TxFrame &frame = _tx_queue[_tx_queue_tail];
+	memcpy(frame.data, buffer, buffer_len);
+	frame.length = static_cast<uint16_t>(buffer_len);
+	frame.offset = 0;
+	_tx_queue_tail = (_tx_queue_tail + 1) % TX_QUEUE_DEPTH;
+	++_tx_queue_count;
+
+	return drain_tx_queue();
+}
+
+bool DytGimbal::drain_tx_queue()
+{
+	if (_uart_fd < 0) {
+		return false;
+	}
+
+	// Bound the number of write calls per work-queue cycle. Short writes retain
+	// their offset, and the next frame cannot start until the current one finishes.
+	for (unsigned writes = 0; writes < 8 && _tx_queue_count > 0; ++writes) {
+		TxFrame &frame = _tx_queue[_tx_queue_head];
+		const size_t remaining = static_cast<size_t>(frame.length - frame.offset);
+		const ssize_t written = ::write(_uart_fd, frame.data + frame.offset, remaining);
+		_last_write_result = static_cast<int>(written);
+
+		if (written > 0) {
+			frame.offset += static_cast<uint16_t>(written);
+			_last_write_errno = 0;
+
+			if (frame.offset == frame.length) {
+				++_command_tx_count;
+				maybe_log_raw_frame("DYT V2 tx", frame.data, frame.length);
+				frame.length = 0;
+				frame.offset = 0;
+				_tx_queue_head = (_tx_queue_head + 1) % TX_QUEUE_DEPTH;
+				--_tx_queue_count;
+			}
+
+			continue;
+		}
+
+		if (written == 0 || (written < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))) {
+			_last_write_errno = written == 0 ? EAGAIN : errno;
+			return true;
+		}
+
+		_last_write_errno = errno;
+		++_write_error_count;
+		close_serial();
+		return false;
+	}
+
+	return true;
+}
+
+void DytGimbal::reset_tx_queue()
+{
+	_tx_queue_head = 0;
+	_tx_queue_tail = 0;
+	_tx_queue_count = 0;
+}
+
+bool DytGimbal::send_detection_start_if_needed()
+{
+	if (!_detection_start_pending) {
+		return true;
+	}
+
+	if (_uart_fd < 0) {
+		return false;
+	}
+
+	// 55 AA 0A 04 2B 00 01 00 00 00 00 00 00 DB
+	static constexpr uint8_t detection_start_frame[TRACKER_FRAME_LEN] {
+		SYNC_1, SYNC_2, TRACKER_FRAME_DATA_LEN, FRAME_ID_TRACKER, TRACKER_DETECTION_START,
+		0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xDB
+	};
+
+	while (_detection_start_tx_offset < sizeof(detection_start_frame)) {
+		const ssize_t written = ::write(_uart_fd, detection_start_frame + _detection_start_tx_offset,
+						  sizeof(detection_start_frame) - _detection_start_tx_offset);
+		_last_write_result = static_cast<int>(written);
+
+		if (written > 0) {
+			_detection_start_tx_offset += static_cast<size_t>(written);
+			continue;
+		}
+
+		if (written == 0 || (written < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK))) {
+			_last_write_errno = written == 0 ? EAGAIN : errno;
+			return false;
+		}
+
+		_last_write_errno = written < 0 ? errno : 0;
+		++_write_error_count;
+		_detection_start_tx_offset = 0;
+		close_serial();
+		return false;
+	}
+
+	_detection_start_pending = false;
+	_detection_start_tx_offset = 0;
+	_last_write_errno = 0;
 	++_command_tx_count;
-	maybe_log_raw_frame("DYT V2 tx", buffer, buffer_len);
+	maybe_log_raw_frame("DYT V2 tx", detection_start_frame, sizeof(detection_start_frame));
+	PX4_INFO("target detection started on arm");
 	return true;
 }
 

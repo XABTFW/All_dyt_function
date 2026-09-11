@@ -85,6 +85,8 @@ private:
 					   | (status.midcourse_target_valid ? 1u << 7 : 0u)
 					   | (status.net_trigger_sent ? 1u << 8 : 0u);
 			msg.vehicle_type = status.vehicle_type;
+			msg.control_mode = status.control_mode;
+			msg.semi_auto_state = status.semi_auto_state;
 			msg.guidance_phase = status.guidance_phase;
 			msg.gcs_phase_request = status.gcs_phase_request;
 			msg.command_phase = status.command_phase;

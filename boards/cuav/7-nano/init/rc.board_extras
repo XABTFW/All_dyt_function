@@ -1,15 +1,12 @@
 #!/bin/sh
 #
-# The DYT gimbal uses TEL2 (/dev/ttyS3). SDM50 ranging and closing-speed
-# estimation use GPS1 (/dev/ttyS0), so the two drivers use separate ports.
+# The DYT gimbal and integrated SDM50 use TEL2 (/dev/ttyS3).
+# The gimbal automatically reports laser status (55 AA 0C 03) at 200 Hz.
+# dyt_gimbal publishes range and closing speed without laser-start commands.
 #
 
 dyt_gimbal start -d /dev/ttyS3
 dyt_guidance start
-
-# GPS is connected through CAN. GPS1 maps to /dev/ttyS0 and is used by the
-# forward-facing SDM50 for net-capture distance triggering.
-sdm50 start -d /dev/ttyS0 -R 0
 
 comm_emergency start
 gnss_emergency start
