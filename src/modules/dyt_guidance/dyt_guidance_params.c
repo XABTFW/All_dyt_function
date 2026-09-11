@@ -214,7 +214,7 @@ PARAM_DEFINE_INT32(DYTG_MODE, 0);
  * Compatibility mirror controlled by DYTG_MODE. It is zero in manual and
  * semi-automatic modes and one in full automatic mode. When enabled, no
  * activation AUX/button is required. After recognition value
- * 100 remains continuously valid for 0.3 seconds, guidance starts a
+ * 100 remains continuously valid for 0.5 seconds, guidance starts a
  * DYTG_LOCK_MS lock window and sends a 0x06 request
  * every 500 ms. A failed window ends tracking, restarts detection, and requires
  * recognition to disappear before another automatic attempt.

@@ -83,7 +83,7 @@ private:
 	static constexpr hrt_abstime MIDCOURSE_OWNSHIP_INTERVAL{40_ms};
 	static constexpr hrt_abstime MIDCOURSE_GEO_TARGET_INTERVAL{100_ms};
 	static constexpr int SEARCH_CENTER_PASSES{2};
-	static constexpr hrt_abstime AUTO_RECOGNITION_HOLD{300_ms};
+	static constexpr hrt_abstime AUTO_RECOGNITION_HOLD{500_ms};
 	static constexpr hrt_abstime AUTO_LOCK_RETRY_INTERVAL{500_ms};
 	static constexpr hrt_abstime MANUAL_TAKEOVER_GRACE{500_ms};
 	static constexpr hrt_abstime TRACK_HANDOFF_SETPOINT_MAX_AGE{300_ms};
@@ -206,6 +206,7 @@ private:
 	void deactivate_guidance(uint8_t lost_reason);
 	void abort_guidance(uint8_t lost_reason);
 	void enter_lost_hold(uint8_t lost_reason);
+	void handle_tracking_loss(uint8_t lost_reason);
 	bool update_lost_reacquire(hrt_abstime now, hrt_abstime lost_enter_time = 0);
 	void update_payload_only_reacquire(hrt_abstime now);
 
@@ -213,6 +214,7 @@ private:
 	bool target_geometry_valid(const dyt_target_s &target) const;
 	bool target_geometry_valid() const;
 	bool target_hint_detected() const;
+	bool target_hint_cleared() const;
 	bool target_fresh() const;
 	bool target_lock_candidate() const;
 	bool target_usable() const;
@@ -1013,7 +1015,8 @@ uint8_t DytGuidance::actual_guidance_phase() const
 		return dyt_guidance_status_s::PHASE_DISARMED;
 	}
 
-	if (_state != TaskState::Idle && _state != TaskState::Abort) {
+	if (_state == TaskState::SearchWaitLock || _state == TaskState::TrackFollow ||
+	    _state == TaskState::TrackIntercept) {
 		return dyt_guidance_status_s::PHASE_TERMINAL;
 	}
 
@@ -1510,6 +1513,13 @@ bool DytGuidance::target_hint_detected() const
 	const bool gap_ok = _last_target.frame_dt_s <= 0.f || _last_target.frame_dt_s <= _param_max_gap.get();
 
 	return age_ok && gap_ok;
+}
+
+bool DytGuidance::target_hint_cleared() const
+{
+	// Rearm only on an explicit fresh servo-status result of 00 00. A stale
+	// sample or a UART timeout must not look like recognition disappearing.
+	return _have_target && !_last_target.auto_hint && _last_target.status1 == 0 && target_fresh();
 }
 
 bool DytGuidance::target_fresh() const
@@ -3248,6 +3258,22 @@ void DytGuidance::enter_lost_hold(uint8_t lost_reason)
 	enter_state(TaskState::LostHold, lost_reason);
 }
 
+void DytGuidance::handle_tracking_loss(uint8_t lost_reason)
+{
+	if (control_mode() == dyt_guidance_status_s::CONTROL_MODE_FULL_AUTO && !target_locked()) {
+		// Do not let the same persistent recognition result immediately re-lock
+		// after a bad terminal-guidance lock. Automatic activation is re-armed
+		// only after recognition clears, then holds continuously for 0.5 seconds.
+		_automatic_rearm_blocked = true;
+		_automatic_operator_exit_blocked = false;
+		deactivate_guidance(lost_reason);
+		send_dyt_command(dyt_command_s::CMD_DETECTION_START);
+		return;
+	}
+
+	enter_lost_hold(lost_reason);
+}
+
 bool DytGuidance::update_lost_reacquire(hrt_abstime now, hrt_abstime lost_enter_time)
 {
 	constexpr hrt_abstime HOME_COMMAND_INTERVAL{200_ms};
@@ -4166,7 +4192,7 @@ void DytGuidance::Run()
 		_automatic_rearm_blocked = false;
 		_automatic_operator_exit_blocked = false;
 
-	} else if (_automatic_rearm_blocked && !_automatic_operator_exit_blocked && !target_hint_detected()) {
+	} else if (_automatic_rearm_blocked && !_automatic_operator_exit_blocked && target_hint_cleared()) {
 		_automatic_rearm_blocked = false;
 	}
 
@@ -4300,8 +4326,8 @@ void DytGuidance::Run()
 
 	case TaskState::TrackFollow:
 		if (!target_usable()) {
-			enter_lost_hold(target_locked() ? dyt_guidance_status_s::LOST_REASON_STALE :
-					 dyt_guidance_status_s::LOST_REASON_TRACKING);
+			handle_tracking_loss(target_locked() ? dyt_guidance_status_s::LOST_REASON_STALE :
+					     dyt_guidance_status_s::LOST_REASON_TRACKING);
 
 		} else {
 			if (intercept_commanded && intercept_allowed()) {
@@ -4312,8 +4338,8 @@ void DytGuidance::Run()
 
 	case TaskState::TrackIntercept:
 		if (!target_usable()) {
-			enter_lost_hold(target_locked() ? dyt_guidance_status_s::LOST_REASON_STALE :
-					 dyt_guidance_status_s::LOST_REASON_TRACKING);
+			handle_tracking_loss(target_locked() ? dyt_guidance_status_s::LOST_REASON_STALE :
+					     dyt_guidance_status_s::LOST_REASON_TRACKING);
 
 		} else {
 			if (!intercept_commanded || !intercept_allowed()) {
@@ -4326,6 +4352,9 @@ void DytGuidance::Run()
 		if (target_usable()) {
 			enter_state(intercept_commanded && intercept_allowed() ? TaskState::TrackIntercept : TaskState::TrackFollow);
 
+		} else if (auto_activation_enabled && !target_locked()) {
+			handle_tracking_loss(dyt_guidance_status_s::LOST_REASON_TRACKING);
+
 		} else {
 			const int32_t center_ms = math::max(_param_center_ms.get(), int32_t{0});
 			const hrt_abstime center_delay = static_cast<hrt_abstime>(center_ms) * 1000ULL;
@@ -4337,7 +4366,7 @@ void DytGuidance::Run()
 				abort_guidance(_lost_reason);
 			} else if (center_done) {
 				// Search scan is disabled: use shared target position to point the seeker, then lock when visible.
-				if (target_lock_candidate()) {
+				if (!auto_activation_enabled && target_lock_candidate()) {
 					update_hint_autolock(now);
 				} else {
 					update_midcourse_pointing(now);
