@@ -81,22 +81,6 @@ PARAM_DEFINE_INT32(DYTG_INT_AUX, 2);
 PARAM_DEFINE_INT32(DYTG_COOP_EN, 1);
 
 /**
- * Automatic midcourse activation height
- *
- * Automatically requests midcourse guidance once per arming cycle after the
- * vehicle has taken off and climbed this far above the takeoff home position.
- * Set to 0 to disable. Selecting another flight mode after midcourse has
- * entered Offboard exits midcourse and does not automatically re-enter it.
- *
- * @unit m
- * @min 0.0
- * @max 500.0
- * @decimal 1
- * @group DYT Guidance
- */
-PARAM_DEFINE_FLOAT(DYTG_MC_HGT, 0.0f);
-
-/**
  * Midcourse geographic tracking enable
  *
  * When enabled, midcourse pointing uses the DYT payload geographic tracking

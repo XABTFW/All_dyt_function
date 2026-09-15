@@ -124,7 +124,7 @@ param_type=MAV_PARAM_TYPE_INT32
 | `DYTG_MODE` | 模式 | 飞控行为 |
 | ---: | --- | --- |
 | 0 | 手动 | 自动使 `DYTG_AUTO_EN=0`，不根据识别结果自动进入制导。 |
-| 1 | 半自动 | 自动使 `DYTG_AUTO_EN=0`；点选后只保持导引头目标锁定，飞控不接管飞机，收到确认后才进入末制导。 |
+| 1 | 半自动 | 自动使 `DYTG_AUTO_EN=0`；点选后只保持导引头目标锁定，不清除现有中制导，收到确认后才由中制导切换到末制导。 |
 | 2 | 全自动 | 自动使 `DYTG_AUTO_EN=1`，使用稳定识别和自动锁定逻辑。 |
 
 `DYTG_AUTO_EN` 现在是兼容镜像参数，地面站不要再直接写它。
@@ -134,9 +134,11 @@ param_type=MAV_PARAM_TYPE_INT32
 1. 用 `PARAM_SET` 设置 `DYTG_MODE=1`，等待参数回传确认。
 2. 继续使用现有 `DYT_TRACK_POINT_COMMAND(12935)` 发送点选坐标，不需要新的点选接口。
 3. `DYT_TRACK_POINT_ACK.result == MAV_RESULT_ACCEPTED` 只表示飞控已接收点选命令。
-4. 监听 `DYT_SYSTEM_STATUS`；当 `control_mode=1` 且 `semi_auto_state=3` 时，表示导引头已锁定并等待确认。此时 `status_flags bit3=0`，飞控不向目标飞。
+4. 监听 `DYT_SYSTEM_STATUS`；当 `control_mode=1` 且 `semi_auto_state=3` 时，表示导引头已锁定并等待确认。此时点选不清除原有中制导请求，飞机仍按中制导目标位置飞行；`status_flags bit3=0` 表示末制导尚未接管。
 5. 操作员点击“确认开始”后，发送 `DYT_GUIDANCE_COMMAND(12925)`：`request_id`为非 0 递增序号，`target_system`为目标飞控 sysid，`target_component=1`，`phase=3`。
 6. 等待 `DYT_SYSTEM_STATUS.command_sequence == request_id`；`command_result=1` 表示正在切换，`command_result=2` 表示已进入末制导。此时 `semi_auto_state=4`，`guidance_phase=3`。
+
+点选锁定本身不会进入末制导；只有收到并接受上述 `DYT_GUIDANCE_COMMAND(12925), phase=3` 后才从中制导切换到末制导。
 
 如果导引头尚未真正锁定就发送确认，飞控返回 `command_result=3` 并且不进入制导。
 

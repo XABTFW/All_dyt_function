@@ -75,7 +75,7 @@ Vehicle::sendDytTrackPointCommand(...)
 
 两种方式最终都在飞控内部生成 `CMD_TRACK_POINT`，半自动逻辑都能识别。同一次点选只能选择其中一种，不要同时发送 MAVLink 12935 和 Shell 命令，否则会重复下发锁定。本次半自动修改不要求地面站更换现有 Shell 点选链路。
 
-3. 等待 `DYT_SYSTEM_STATUS.control_mode=1` 且 `semi_auto_state=3`。此时导引头保持目标锁定，飞控不进入末制导，`status_flags bit3=0`。
+3. 等待 `DYT_SYSTEM_STATUS.control_mode=1` 且 `semi_auto_state=3`。此时导引头保持目标锁定，点选操作不清除原有中制导请求，飞机继续由中制导控制；导引头末制导尚未接管，`status_flags bit3=0`。
 4. 点击“确认开始”后发送已有 `DYT_GUIDANCE_COMMAND(12925)`：
 
 ```text
@@ -93,6 +93,8 @@ command_result == 2
 semi_auto_state == 4
 guidance_phase == 3
 ```
+
+只有这条 `phase=3` 确认消息被飞控接受后，才允许从中制导切换到末制导。点选锁定本身不得触发末制导。
 
 如果在 `semi_auto_state=3` 之前发送确认，飞控返回 `command_result=3`，不进入末制导。
 

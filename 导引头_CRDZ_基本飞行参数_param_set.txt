@@ -49,7 +49,9 @@ param set CRDZ_HOLD_MODE 1
 param set CRDZ_HOLD_T 2
 param set CRDZ_HOLD_VEL 5
 param set CRDZ_SLOW_RAD 20
-param set CRDZ_X_OFF 30
+param set CRDZ_XY_OFF_EN 1
+param set CRDZ_FB_OFF -30
+param set CRDZ_LR_OFF 0
 
 
 # ===== 多旋翼姿态/角速度控制 MC（全部）（53 项）=====

@@ -95,10 +95,7 @@ bool CooperativeRendezvous::button_active(int button) const
 
 bool CooperativeRendezvous::physical_rendezvous_request() const
 {
-	const int act_aux = _param_act_aux.get();
-	const int act_btn = _param_act_btn.get();
-
-	return (act_aux == 0 && act_btn < 0) || aux_switch_active(act_aux) || button_active(act_btn);
+	return dyt_status_fresh() && _dyt_guidance_status.midcourse_switch_requested;
 }
 
 bool CooperativeRendezvous::phase_midcourse_requested() const
@@ -121,7 +118,7 @@ bool CooperativeRendezvous::rendezvous_switch_enabled() const
 		}
 
 		if (_dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_TERMINAL) {
-			return _gcs_midcourse_engaged;
+			return _gcs_midcourse_engaged || physical_rendezvous_request();
 		}
 	}
 
@@ -639,36 +636,61 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 
 	apply_target_filter(raw_position, raw_velocity, target_position, target_velocity);
 
-	float offset_x = _options.target_offset(0);
-	float offset_y = _options.target_offset(1);
+	float forward_offset = _options.target_offset(0);
+	float right_offset = _options.target_offset(1);
 
 	if (_param_xy_offset_enable.get() > 0) {
-		const float x_offset = _param_x_offset.get();
-		const float y_offset = _param_y_offset.get();
+		const float configured_forward_offset = _param_forward_offset.get();
+		const float configured_right_offset = _param_right_offset.get();
 
-		offset_x = PX4_ISFINITE(x_offset) ? x_offset : 0.f;
-		offset_y = PX4_ISFINITE(y_offset) ? y_offset : 0.f;
+		forward_offset = PX4_ISFINITE(configured_forward_offset) ? configured_forward_offset : 0.f;
+		right_offset = PX4_ISFINITE(configured_right_offset) ? configured_right_offset : 0.f;
 
 	} else {
 		const float target_distance = _param_dist.get();
 
 		if (PX4_ISFINITE(target_distance) && target_distance >= 0.f) {
-			const float offset_norm = sqrtf(offset_x * offset_x + offset_y * offset_y);
-
-			if (offset_norm > 0.001f) {
-				const float scale = target_distance / offset_norm;
-				offset_x *= scale;
-				offset_y *= scale;
-
-			} else {
-				offset_x = -target_distance;
-				offset_y = 0.f;
-			}
+			forward_offset = -target_distance;
+			right_offset = 0.f;
 		}
 	}
 
-	target_position(0) += offset_x;
-	target_position(1) += offset_y;
+	const matrix::Vector2f target_velocity_xy(target_velocity(0), target_velocity(1));
+	const float target_horizontal_speed = target_velocity_xy.norm();
+	matrix::Vector2f target_forward{};
+	bool target_direction_valid = false;
+
+	if (PX4_ISFINITE(target_horizontal_speed) && target_horizontal_speed > 0.5f) {
+		target_forward = target_velocity_xy / target_horizontal_speed;
+		target_direction_valid = target_forward.isAllFinite();
+
+		if (target_direction_valid) {
+			_target_forward_xy = target_forward;
+			_target_direction_valid = true;
+		}
+
+	} else if (_target_direction_valid) {
+		target_forward = _target_forward_xy;
+		target_direction_valid = true;
+
+	} else if (PX4_ISFINITE(_target_info.yaw)) {
+		const float target_yaw = static_cast<float>(_target_info.yaw);
+		target_forward = matrix::Vector2f(cosf(target_yaw), sinf(target_yaw));
+		target_direction_valid = target_forward.isAllFinite();
+
+		if (target_direction_valid) {
+			_target_forward_xy = target_forward;
+			_target_direction_valid = true;
+		}
+	}
+
+	if (target_direction_valid) {
+		const matrix::Vector2f target_right(-target_forward(1), target_forward(0));
+		const matrix::Vector2f horizontal_offset = target_forward * forward_offset + target_right * right_offset;
+		target_position(0) += horizontal_offset(0);
+		target_position(1) += horizontal_offset(1);
+	}
+
 	target_position(2) += vertical_offset;
 	enforce_target_minimum_height(target_position);
 	push_target_history(target_position);
@@ -1412,14 +1434,14 @@ int CooperativeRendezvous::print_status()
 		break;
 	}
 
-	PX4_INFO("running: vehicle=%" PRIu32 " role=%s target=%" PRIu32 " offset=(%.1f %.1f %.1f) xy_en=%ld xy=(%.1f %.1f) dist=%.1f app_spd=%.1f slow=%.1f vslew=%.1f tpos_tc=%.2f tvel_tc=%.2f tpos_jmp=%.1f alt_diff=%.1f",
+	PX4_INFO("running: vehicle=%" PRIu32 " role=%s target=%" PRIu32 " offset=(%.1f %.1f %.1f) xy_en=%ld fb_lr=(%.1f %.1f) dist=%.1f app_spd=%.1f slow=%.1f vslew=%.1f tpos_tc=%.2f tvel_tc=%.2f tpos_jmp=%.1f alt_diff=%.1f",
 		 _vehicle_id, role, _options.target_id,
 		 (double)_options.target_offset(0),
 		 (double)_options.target_offset(1),
 		 (double)_options.target_offset(2),
 		 static_cast<long>(_param_xy_offset_enable.get()),
-		 (double)_param_x_offset.get(),
-		 (double)_param_y_offset.get(),
+		 (double)_param_forward_offset.get(),
+		 (double)_param_right_offset.get(),
 		 (double)_param_dist.get(),
 		 (double)_param_app_speed.get(),
 		 (double)_param_slow_radius.get(),
@@ -1585,8 +1607,8 @@ MAV_SYS_ID=2 flies to a configurable offset near aircraft 1.
 	PRINT_MODULE_USAGE_PARAM_STRING('r', "auto", "auto|broadcast|rendezvous", "Role selection", true);
 	PRINT_MODULE_USAGE_PARAM_INT('t', 1, 1, 255, "Target MAV_SYS_ID for rendezvous", true);
 	PRINT_MODULE_USAGE_PARAM_FLOAT('d', 5.f, 0.f, 100.f, "Distance behind target when x offset is not set", true);
-	PRINT_MODULE_USAGE_PARAM_FLOAT('x', -5.f, -100.f, 100.f, "Target NED x offset", true);
-	PRINT_MODULE_USAGE_PARAM_FLOAT('y', 0.f, -100.f, 100.f, "Target NED y offset", true);
+	PRINT_MODULE_USAGE_PARAM_FLOAT('x', -5.f, -100.f, 100.f, "Target forward/back offset", true);
+	PRINT_MODULE_USAGE_PARAM_FLOAT('y', 0.f, -100.f, 100.f, "Target left/right offset", true);
 	PRINT_MODULE_USAGE_PARAM_FLOAT('z', 0.f, -50.f, 50.f, "Target NED z offset", true);
 	PRINT_MODULE_USAGE_PARAM_FLOAT('v', 3.f, 0.5f, 50.f, "Maximum approach speed", true);
 	PRINT_MODULE_USAGE_PARAM_FLOAT('T', 2.f, 0.5f, 10.f, "Target timeout", true);

@@ -158,6 +158,8 @@ private:
 	matrix::Vector3f _target_position_filtered{};
 	matrix::Vector3f _target_velocity_input{};
 	matrix::Vector3f _target_velocity_filtered{};
+	matrix::Vector2f _target_forward_xy{};
+	bool _target_direction_valid{false};
 	matrix::Vector3f _arrival_hold_position{};
 	gcs_trajectory_setpoint_s _gcs_setpoint{};
 	float _arrival_hold_yaw{NAN};
@@ -190,8 +192,8 @@ private:
 		(ParamInt<px4::params::CRDZ_ACT_BTN>) _param_act_btn,
 		(ParamFloat<px4::params::CRDZ_DIST>) _param_dist,
 		(ParamInt<px4::params::CRDZ_XY_OFF_EN>) _param_xy_offset_enable,
-		(ParamFloat<px4::params::CRDZ_X_OFF>) _param_x_offset,
-		(ParamFloat<px4::params::CRDZ_Y_OFF>) _param_y_offset,
+		(ParamFloat<px4::params::CRDZ_FB_OFF>) _param_forward_offset,
+		(ParamFloat<px4::params::CRDZ_LR_OFF>) _param_right_offset,
 		(ParamFloat<px4::params::CRDZ_APP_SPD>) _param_app_speed,
 		(ParamFloat<px4::params::CRDZ_SLOW_RAD>) _param_slow_radius,
 		(ParamInt<px4::params::CRDZ_HOLD_EN>) _param_arrival_hold_enable,

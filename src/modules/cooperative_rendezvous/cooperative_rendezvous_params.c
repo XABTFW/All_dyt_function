@@ -1,16 +1,20 @@
 /**
  * Activation AUX channel
  *
- * Controls whether the rendezvous aircraft may publish Offboard setpoints.
- * Position broadcast remains enabled while the module is running.
+ * A low-to-high transition requests midcourse guidance once. The request stays
+ * latched until the operator selects another flight mode or net-capture braking
+ * completes. Re-entry then requires moving the switch low and high again.
  *
- * @value 0 Always enabled
+ * @value -1 Disabled
+ * @value 0 Disabled
  * @value 1 AUX1
  * @value 2 AUX2
  * @value 3 AUX3
  * @value 4 AUX4
  * @value 5 AUX5
  * @value 6 AUX6
+ * @min -1
+ * @max 6
  * @group Cooperative Rendezvous
  */
 PARAM_DEFINE_INT32(CRDZ_ACT_AUX, 3);
@@ -18,9 +22,9 @@ PARAM_DEFINE_INT32(CRDZ_ACT_AUX, 3);
 /**
  * Activation joystick button
  *
- * Controls whether the rendezvous aircraft may publish Offboard setpoints using
- * the MANUAL_CONTROL buttons bitmask. Button numbers match the zero-based
- * numbering shown by QGroundControl.
+ * A button press requests midcourse guidance once using the MANUAL_CONTROL
+ * buttons bitmask. The button must be released and pressed again after guidance
+ * exits. Button numbers match the zero-based numbering shown by QGroundControl.
  *
  * @value -1 Disabled
  * @min -1
@@ -47,10 +51,10 @@ PARAM_DEFINE_FLOAT(CRDZ_DIST, 0.f);
 /**
  * Enable explicit horizontal offsets
  *
- * When enabled, CRDZ_X_OFF and CRDZ_Y_OFF directly define the target-relative
- * NED horizontal offset. CRDZ_DIST is ignored for horizontal offset generation.
- * Keep disabled to use the legacy CRDZ_DIST scaling of the startup -x/-y
- * offset direction.
+ * When enabled, CRDZ_FB_OFF and CRDZ_LR_OFF directly define the horizontal
+ * offset in the target aircraft's moving frame. CRDZ_DIST is ignored for
+ * horizontal offset generation. Keep disabled to use CRDZ_DIST as a distance
+ * directly behind the target aircraft.
  *
  * @boolean
  * @group Cooperative Rendezvous
@@ -58,10 +62,10 @@ PARAM_DEFINE_FLOAT(CRDZ_DIST, 0.f);
 PARAM_DEFINE_INT32(CRDZ_XY_OFF_EN, 0);
 
 /**
- * Target NED X offset
+ * Target forward/back offset
  *
- * Exact NED X offset from the target aircraft used when CRDZ_XY_OFF_EN is set.
- * Positive is North in the local NED frame.
+ * Longitudinal offset from the target aircraft used when CRDZ_XY_OFF_EN is set.
+ * Positive is in front of the target and negative is behind the target.
  *
  * @unit m
  * @min -100
@@ -69,13 +73,13 @@ PARAM_DEFINE_INT32(CRDZ_XY_OFF_EN, 0);
  * @decimal 1
  * @group Cooperative Rendezvous
  */
-PARAM_DEFINE_FLOAT(CRDZ_X_OFF, -5.f);
+PARAM_DEFINE_FLOAT(CRDZ_FB_OFF, -5.f);
 
 /**
- * Target NED Y offset
+ * Target left/right offset
  *
- * Exact NED Y offset from the target aircraft used when CRDZ_XY_OFF_EN is set.
- * Positive is East in the local NED frame.
+ * Lateral offset from the target aircraft used when CRDZ_XY_OFF_EN is set.
+ * Positive is to the target's right and negative is to the target's left.
  *
  * @unit m
  * @min -100
@@ -83,7 +87,7 @@ PARAM_DEFINE_FLOAT(CRDZ_X_OFF, -5.f);
  * @decimal 1
  * @group Cooperative Rendezvous
  */
-PARAM_DEFINE_FLOAT(CRDZ_Y_OFF, 0.f);
+PARAM_DEFINE_FLOAT(CRDZ_LR_OFF, 0.f);
 
 /**
  * Approach speed toward target position

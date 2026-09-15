@@ -126,7 +126,7 @@ python3 pymavlink/tools/mavgen.py \
 
 1. 接收真实位置类型的 `UAV_INFO`，转换成 `follower_info`。
 2. 目标位置必须新鲜，且纬度、经度和 AMSL 高度有效。
-3. 将全局位置投影到本机 NED，叠加 `CRDZ_X_OFF/Y_OFF/ALT_DIFF` 或 `CRDZ_DIST`。
+3. 将全局位置投影到本机 NED；`CRDZ_XY_OFF_EN=1` 时，按目标运动方向旋转并叠加 `CRDZ_FB_OFF/CRDZ_LR_OFF`；否则使用 `CRDZ_DIST` 在目标后方保持距离；最后应用 `CRDZ_ALT_DIFF`。
 4. 产生位置和速度 setpoint，并请求 OFFBOARD。
 5. DYT 末制导真正接管飞机后，cooperative 模块停止发布轨迹 setpoint；丢锁搜索期间仍由 cooperative 控制飞机。
 
@@ -134,12 +134,12 @@ python3 pymavlink/tools/mavgen.py \
 
 | Parameter | Default | Units | Description |
 | --- | ---: | --- | --- |
-| `CRDZ_ACT_AUX` | 3 |  | cooperative 激活 AUX；0 表示始终允许。 |
-| `CRDZ_ACT_BTN` | -1 |  | QGC joystick button；-1 禁用。 |
+| `CRDZ_ACT_AUX` | 3 |  | cooperative 一次性激活 AUX；从低到高触发，-1/0 禁用。 |
+| `CRDZ_ACT_BTN` | -1 |  | QGC 一次性触发按钮；退出后必须松开再按，-1 禁用。 |
 | `CRDZ_DIST` | 0 | m | 相对目标水平距离。 |
-| `CRDZ_XY_OFF_EN` | 0 | bool | 使用明确的 NED X/Y 偏移。 |
-| `CRDZ_X_OFF` | -5 | m | 目标相对 North 偏移。 |
-| `CRDZ_Y_OFF` | 0 | m | 目标相对 East 偏移。 |
+| `CRDZ_XY_OFF_EN` | 0 | bool | 使用目标随动的前后/左右偏移。 |
+| `CRDZ_FB_OFF` | -5 | m | 目标前后偏移：负数在后方，正数在前方。 |
+| `CRDZ_LR_OFF` | 0 | m | 目标左右偏移：负数在左方，正数在右方。 |
 | `CRDZ_ALT_DIFF` | 0 | m | 正值表示会合机高于目标机。 |
 | `CRDZ_APP_SPD` | 4 | m/s | 接近目标的附加闭合速度。 |
 | `CRDZ_SLOW_RAD` | 5 | m | 接近目标时开始线性减速的半径。 |
@@ -232,6 +232,8 @@ python3 pymavlink/tools/mavgen.py \
 | ---: | --- | --- |
 | `2` | `PHASE_MIDCOURSE` | cooperative_rendezvous 控制飞机，DYT 根据共享目标做地理/角度指向。 |
 | `3` | `PHASE_TERMINAL` | 授权 DYT 末制导，等待目标锁定后接管飞机。 |
+
+半自动模式 `DYTG_MODE=1` 下，点选锁定不会清除中制导，也不会自动进入末制导。地面站必须等待 `DYT_SYSTEM_STATUS.semi_auto_state=3`，再发送一条新的 `DYT_GUIDANCE_COMMAND(12925)`，其中 `phase=3`；只有该确认命令被接受后，才允许从中制导切换到末制导。
 
 ### 地面站发送规则
 

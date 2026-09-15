@@ -56,6 +56,7 @@ uint8 command_result
 
 bool net_trigger_sent             # net-capture trigger command was sent in this terminal session
 bool auto_midcourse_requested     # onboard height trigger is requesting midcourse guidance
+bool midcourse_switch_requested   # latched one-shot request from CRDZ_ACT_AUX/CRDZ_ACT_BTN
 bool midcourse_active
 bool midcourse_target_valid
 

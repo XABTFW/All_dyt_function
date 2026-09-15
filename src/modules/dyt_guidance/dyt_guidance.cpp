@@ -172,7 +172,6 @@ private:
 	void update_vehicle_id();
 	void update_params_if_needed();
 	void update_control_mode();
-	void update_auto_midcourse_request();
 	void update_midcourse_mode_exit();
 	void handle_dyt_command_events();
 	void handle_ground_guidance_commands(hrt_abstime now);
@@ -189,6 +188,8 @@ private:
 	bool semi_target_ready() const;
 	uint8_t semi_auto_state() const;
 	bool activation_requested() const;
+	bool midcourse_switch_active() const;
+	void update_midcourse_switch_request();
 	bool midcourse_switch_requested() const;
 	bool midcourse_pointing_requested() const;
 	bool manual_fire_requested() const;
@@ -358,11 +359,11 @@ private:
 	bool _automatic_offboard_seen{false};
 	bool _automatic_rearm_blocked{false};
 	bool _automatic_operator_exit_blocked{false};
-	bool _auto_midcourse_requested{false};
-	bool _auto_midcourse_triggered{false};
 	bool _midcourse_operator_exit_blocked{false};
 	bool _midcourse_offboard_seen{false};
 	bool _previous_gcs_midcourse_request{false};
+	bool _midcourse_switch_latched{false};
+	bool _previous_midcourse_switch_active{false};
 	bool _semi_target_selected{false};
 	bool _semi_guidance_confirmed{false};
 	hrt_abstime _semi_selection_time{0};
@@ -557,7 +558,6 @@ private:
 		(ParamInt<px4::params::DYTG_ACT_BTN>) _param_act_btn,
 		(ParamInt<px4::params::DYTG_INT_AUX>) _param_int_aux,
 		(ParamInt<px4::params::DYTG_COOP_EN>) _param_coop_enable,
-		(ParamFloat<px4::params::DYTG_MC_HGT>) _param_auto_midcourse_height,
 		(ParamInt<px4::params::DYTG_GEO_EN>) _param_midcourse_geo_enable,
 		(ParamInt<px4::params::CRDZ_ACT_AUX>) _param_midcourse_act_aux,
 		(ParamInt<px4::params::CRDZ_ACT_BTN>) _param_midcourse_act_btn,
@@ -861,7 +861,7 @@ void DytGuidance::update_params_if_needed()
 		// The configured vehicle type owns post-release behavior. Switching a
 		// net-capture aircraft to another role cancels any net-specific motion,
 		// while releasing the net alone must not change the configured role.
-		if (effective_vehicle_type() != dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE) {
+		if (_param_vehicle_type.get() != dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE) {
 			clear_net_release_trigger();
 			clear_net_hold();
 			clear_net_decel();
@@ -920,6 +920,7 @@ void DytGuidance::update_control_mode()
 
 	_last_control_mode = mode;
 	_gcs_phase_request = 0;
+	_midcourse_switch_latched = false;
 	_semi_target_selected = false;
 	_semi_guidance_confirmed = false;
 	_semi_selection_time = 0;
@@ -928,56 +929,6 @@ void DytGuidance::update_control_mode()
 	if (_state != TaskState::Idle && _state != TaskState::Abort) {
 		deactivate_guidance(dyt_guidance_status_s::LOST_REASON_MANUAL);
 	}
-}
-
-void DytGuidance::update_auto_midcourse_request()
-{
-	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
-		_auto_midcourse_requested = false;
-		_auto_midcourse_triggered = false;
-		return;
-	}
-
-	if (_auto_midcourse_triggered) {
-		return;
-	}
-
-	const float configured_height = _param_auto_midcourse_height.get();
-
-	if (!PX4_ISFINITE(configured_height) || configured_height <= 0.f || _param_coop_enable.get() <= 0
-	    || _vehicle_status.takeoff_time == 0 || _vehicle_status.failsafe
-	    || !_home_position.valid_lpos || !PX4_ISFINITE(_home_position.z)
-	    || !_vehicle_local_position.z_valid || !PX4_ISFINITE(_vehicle_local_position.z)
-	    || _vehicle_local_position.timestamp == 0
-	    || hrt_elapsed_time(&_vehicle_local_position.timestamp) >= 1_s) {
-		return;
-	}
-
-	const float trigger_height = math::constrain(configured_height, 0.f, 500.f);
-	const float height_above_takeoff = _home_position.z - _vehicle_local_position.z;
-
-	if (!PX4_ISFINITE(height_above_takeoff) || height_above_takeoff < trigger_height) {
-		return;
-	}
-
-	// Crossing the configured height is a once-per-arming event. Never pull the
-	// aircraft back from terminal guidance or from an operator-selected RTL/Land.
-	_auto_midcourse_triggered = true;
-	const bool terminal_active = _gcs_phase_request == dyt_guidance_command_s::PHASE_TERMINAL
-				     || (_state != TaskState::Idle && _state != TaskState::Abort);
-	const uint8_t user_intention = _vehicle_status.nav_state_user_intention;
-	const bool return_or_land = user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
-				    || user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND;
-
-	if (terminal_active || return_or_land) {
-		PX4_INFO("automatic midcourse skipped at %.1f m", static_cast<double>(height_above_takeoff));
-		return;
-	}
-
-	_auto_midcourse_requested = true;
-	_midcourse_operator_exit_blocked = false;
-	_midcourse_offboard_seen = false;
-	PX4_INFO("automatic midcourse requested at %.1f m", static_cast<double>(height_above_takeoff));
 }
 
 void DytGuidance::update_midcourse_mode_exit()
@@ -989,6 +940,7 @@ void DytGuidance::update_midcourse_mode_exit()
 		_midcourse_operator_exit_blocked = false;
 		_midcourse_offboard_seen = false;
 		_previous_gcs_midcourse_request = false;
+		_midcourse_switch_latched = false;
 		return;
 	}
 
@@ -996,11 +948,11 @@ void DytGuidance::update_midcourse_mode_exit()
 		_midcourse_operator_exit_blocked = false;
 	}
 
-	if (!gcs_midcourse_requested && !_auto_midcourse_requested && !switch_requested) {
+	if (!gcs_midcourse_requested && !switch_requested) {
 		_midcourse_operator_exit_blocked = false;
 	}
 
-	const bool midcourse_requested = gcs_midcourse_requested || _auto_midcourse_requested || switch_requested;
+	const bool midcourse_requested = gcs_midcourse_requested || switch_requested;
 	const bool terminal_inactive = _state == TaskState::Idle || _state == TaskState::Abort;
 
 	if (!_midcourse_operator_exit_blocked && midcourse_requested && terminal_inactive && offboard_control_active()) {
@@ -1011,8 +963,7 @@ void DytGuidance::update_midcourse_mode_exit()
 	    && _vehicle_status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD) {
 		_midcourse_operator_exit_blocked = true;
 		_midcourse_offboard_seen = false;
-		_auto_midcourse_requested = false;
-
+		_midcourse_switch_latched = false;
 		if (gcs_midcourse_requested) {
 			_gcs_phase_request = 0;
 		}
@@ -1037,7 +988,6 @@ void DytGuidance::handle_dyt_command_events()
 			deactivate_guidance_keep_tracking(dyt_guidance_status_s::LOST_REASON_MANUAL);
 		}
 
-		_gcs_phase_request = 0;
 		_ground_command_result = dyt_guidance_status_s::COMMAND_RESULT_NONE;
 		_semi_target_selected = true;
 		_semi_guidance_confirmed = false;
@@ -1152,10 +1102,6 @@ void DytGuidance::handle_ground_guidance_commands(hrt_abstime now)
 
 		if (valid_phase && phase_preconditions_ok) {
 			_gcs_phase_request = command.phase;
-
-			if (command.phase == dyt_guidance_command_s::PHASE_TERMINAL) {
-				_auto_midcourse_requested = false;
-			}
 
 			if (semi_terminal_request) {
 				_semi_guidance_confirmed = true;
@@ -1319,12 +1265,35 @@ bool DytGuidance::activation_requested() const
 	       || payload_switch_active();
 }
 
-bool DytGuidance::midcourse_switch_requested() const
+bool DytGuidance::midcourse_switch_active() const
 {
 	const int act_aux = _param_midcourse_act_aux.get();
 	const int act_btn = _param_midcourse_act_btn.get();
 
-	return (act_aux == 0 && act_btn < 0) || aux_switch_active(act_aux) || button_active(act_btn);
+	return aux_switch_active(act_aux) || button_active(act_btn);
+}
+
+void DytGuidance::update_midcourse_switch_request()
+{
+	const bool switch_active = midcourse_switch_active();
+
+	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
+		_midcourse_switch_latched = false;
+		_previous_midcourse_switch_active = switch_active;
+		return;
+	}
+
+	if (switch_active && !_previous_midcourse_switch_active) {
+		_midcourse_switch_latched = true;
+		_midcourse_operator_exit_blocked = false;
+	}
+
+	_previous_midcourse_switch_active = switch_active;
+}
+
+bool DytGuidance::midcourse_switch_requested() const
+{
+	return _midcourse_switch_latched;
 }
 
 bool DytGuidance::midcourse_pointing_requested() const
@@ -1344,7 +1313,7 @@ bool DytGuidance::midcourse_pointing_requested() const
 		return false;
 	}
 
-	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE || _auto_midcourse_requested) {
+	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE) {
 		return true;
 	}
 
@@ -2731,11 +2700,22 @@ void DytGuidance::publish_net_brake_setpoint()
 
 	if (speed <= math::constrain(_param_net_stop_speed.get(), 0.05f, 1.f)) {
 		capture_hold_setpoint();
-		_net_brake_active = false;
-		publish_hold_setpoint();
+		send_dyt_command(dyt_command_s::CMD_STOP_TRACK);
+		reset_automatic_session();
+		_payload_lock_seen = false;
+		_payload_lost_hold = false;
+		_payload_lost_enter_time = 0;
+		_gcs_phase_request = 0;
+		_midcourse_switch_latched = false;
+		enter_state(TaskState::Idle, dyt_guidance_status_s::LOST_REASON_NONE);
 		_net_capture_complete = true;
-		_net_hold_active = false;
+		_net_hold_active = true;
+		_net_brake_active = false;
+		_net_hold_start_time = now;
+		_automatic_rearm_blocked = true;
+		_automatic_operator_exit_blocked = true;
 		clear_net_decel();
+		publish_hold_setpoint();
 		return;
 	}
 
@@ -2912,6 +2892,10 @@ bool DytGuidance::vehicle_control_active() const
 {
 	if (!offboard_control_active()) {
 		return false;
+	}
+
+	if (_net_capture_complete && _net_hold_active) {
+		return true;
 	}
 
 	// States where the seeker would command aircraft motion (trajectory/offboard setpoints).
@@ -3405,7 +3389,8 @@ void DytGuidance::publish_status()
 	status.command_phase = _ground_command_phase;
 	status.command_result = _ground_command_result;
 	status.net_trigger_sent = _net_release_sent;
-	status.auto_midcourse_requested = _auto_midcourse_requested;
+	status.auto_midcourse_requested = false;
+	status.midcourse_switch_requested = _midcourse_switch_latched;
 	status.midcourse_active = cooperative_status_fresh() && _cooperative_status.active;
 	status.midcourse_target_valid = cooperative_status_fresh() && _cooperative_status.target_valid;
 	dyt_midcourse_log_s midcourse_log{};
@@ -4810,18 +4795,56 @@ void DytGuidance::Run()
 	update_control_mode();
 	update_vehicle_id();
 	update_subscriptions();
+	update_midcourse_switch_request();
 
 	const hrt_abstime now = hrt_absolute_time();
 
 	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
 		_gcs_phase_request = 0;
+		_midcourse_switch_latched = false;
 		_semi_target_selected = false;
 		_semi_guidance_confirmed = false;
 		_semi_selection_time = 0;
 	}
 
-	update_auto_midcourse_request();
 	update_midcourse_mode_exit();
+
+	if (_net_capture_complete && _net_hold_active) {
+		const bool gcs_midcourse_requested =
+			_gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE;
+		const bool switch_midcourse_requested = midcourse_switch_requested();
+		const bool operator_mode_exit = vehicle_status_fresh() && !_vehicle_status.failsafe
+						&& _vehicle_status.nav_state_user_intention
+						!= vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
+
+		// An explicit flight-mode selection has priority over both midcourse
+		// request paths. Stop publishing Offboard setpoints so the operator can
+		// immediately take control of the aircraft.
+		if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED || operator_mode_exit) {
+			clear_net_hold();
+			_gcs_phase_request = 0;
+			_midcourse_switch_latched = false;
+			_midcourse_operator_exit_blocked = operator_mode_exit;
+			update_ground_command_result(now);
+			publish_status();
+			return;
+
+		} else if ((gcs_midcourse_requested || switch_midcourse_requested) && !_vehicle_status.failsafe) {
+			clear_net_hold();
+			_midcourse_operator_exit_blocked = false;
+			_midcourse_offboard_seen = false;
+			_automatic_rearm_blocked = false;
+			_automatic_operator_exit_blocked = false;
+
+		} else {
+			request_offboard_mode();
+			publish_offboard_mode(true);
+			publish_hold_setpoint();
+			update_ground_command_result(now);
+			publish_status();
+			return;
+		}
+	}
 
 	const bool activation_request = activation_requested();
 	const bool midcourse_pointing_request = midcourse_pointing_requested();
