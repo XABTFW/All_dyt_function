@@ -81,6 +81,22 @@ PARAM_DEFINE_INT32(DYTG_INT_AUX, 2);
 PARAM_DEFINE_INT32(DYTG_COOP_EN, 1);
 
 /**
+ * Automatic midcourse activation height
+ *
+ * Automatically requests midcourse guidance once per arming cycle after the
+ * vehicle has taken off and climbed this far above the takeoff home position.
+ * Set to 0 to disable. Selecting another flight mode after midcourse has
+ * entered Offboard exits midcourse and does not automatically re-enter it.
+ *
+ * @unit m
+ * @min 0.0
+ * @max 500.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_MC_HGT, 0.0f);
+
+/**
  * Midcourse geographic tracking enable
  *
  * When enabled, midcourse pointing uses the DYT payload geographic tracking
@@ -214,10 +230,11 @@ PARAM_DEFINE_INT32(DYTG_MODE, 0);
  * Compatibility mirror controlled by DYTG_MODE. It is zero in manual and
  * semi-automatic modes and one in full automatic mode. When enabled, no
  * activation AUX/button is required. After recognition value
- * 100 remains continuously valid for 0.5 seconds, guidance starts a
- * DYTG_LOCK_MS lock window and sends a 0x06 request
- * every 500 ms. A failed window ends tracking, restarts detection, and requires
- * recognition to disappear before another automatic attempt.
+ * 100 remains continuously valid for 0.4 seconds, guidance starts a
+ * DYTG_LOCK_MS lock window and sends a 0x06 request every 500 ms until the
+ * payload reports that tracking acquisition is in progress. A failed window
+ * ends tracking, restarts detection, and allows persistent recognition to
+ * qualify for another attempt after a new 0.4-second hold.
  * Selecting another flight mode exits the automatic terminal-guidance session.
  * An explicit activation AUX/button rising edge continues to request tracking
  * directly, independently of payload recognition.
@@ -360,7 +377,142 @@ PARAM_DEFINE_INT32(DYTG_RTRYMS, 1000);
  * @max 1000
  * @group DYT Guidance
  */
-PARAM_DEFINE_FLOAT(DYTG_DLY_MS, 120.f);
+PARAM_DEFINE_FLOAT(DYTG_DLY_MS, 30.f);
+
+/**
+ * Gimbal telemetry delay
+ *
+ * Estimated delay from sampling the gimbal attitude until the servo-status
+ * frame is received. This is calibrated separately from the image delay.
+ *
+ * @unit ms
+ * @min 0
+ * @max 1000
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_GMB_DLY, 0.f);
+
+/**
+ * Terminal guidance law
+ *
+ * @value 0 Legacy LOS/PN control
+ * @value 1 Bounded fixed-speed LOS turn control
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYTG_GD_LAW, 0);
+
+/**
+ * Terminal LOS-rate steering enable
+ *
+ * @boolean
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYTG_PN_EN, 0);
+
+/**
+ * Terminal acceleration feedforward enable
+ *
+ * When disabled, the bounded acceleration is used to generate the velocity
+ * setpoint but is not sent to the PX4 velocity controller as feedforward.
+ *
+ * @boolean
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_INT32(DYTG_ACC_FF, 0);
+
+/**
+ * Terminal LOS filter time constant
+ *
+ * @unit s
+ * @min 0.01
+ * @max 1.0
+ * @decimal 3
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_LOS_TC, 0.08f);
+
+/**
+ * Terminal LOS-rate filter time constant
+ *
+ * @unit s
+ * @min 0.01
+ * @max 2.0
+ * @decimal 3
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_OMG_TC, 0.15f);
+
+/**
+ * Maximum accepted raw LOS rate
+ *
+ * Samples above this limit do not contribute a LOS-rate steering command.
+ *
+ * @unit rad/s
+ * @min 0.05
+ * @max 10.0
+ * @decimal 2
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_OMG_MAX, 0.8f);
+
+/**
+ * Follow LOS-rate turn gain
+ *
+ * @unit m/s
+ * @min 0.0
+ * @max 60.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_KW_FOL, 10.f);
+
+/**
+ * Intercept LOS-rate turn gain
+ *
+ * @unit m/s
+ * @min 0.0
+ * @max 60.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_KW_INT, 10.f);
+
+/**
+ * Terminal horizontal acceleration jerk limit
+ *
+ * @unit m/s^3
+ * @min 0.1
+ * @max 30.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_ACC_JERK, 4.f);
+
+/**
+ * Terminal horizontal speed slew rate
+ *
+ * @unit m/s^2
+ * @min 0.1
+ * @max 20.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_SPD_SLEW, 2.f);
+
+/**
+ * Maximum speed for entering position hold after terminal lock loss
+ *
+ * Above this speed the new terminal guidance law keeps the current course and
+ * reduces the velocity setpoint at DYTG_SPD_SLEW instead of commanding an
+ * immediate position hold.
+ *
+ * @unit m/s
+ * @min 0.5
+ * @max 10.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_HOLD_V, 2.f);
 
 /**
  * Maximum target age
@@ -425,7 +577,7 @@ PARAM_DEFINE_FLOAT(DYTG_N_FOL, 2.0f);
  *
  * @unit m/s
  * @min 0.1
- * @max 20.0
+ * @max 60.0
  * @decimal 1
  * @group DYT Guidance
  */
@@ -467,7 +619,7 @@ PARAM_DEFINE_FLOAT(DYTG_N_INT, 3.5f);
  *
  * @unit m/s
  * @min 0.1
- * @max 25.0
+ * @max 60.0
  * @decimal 1
  * @group DYT Guidance
  */
@@ -510,7 +662,7 @@ PARAM_DEFINE_FLOAT(DYTG_VMIN, 1.0f);
  *
  * @unit m/s
  * @min 0.5
- * @max 30.0
+ * @max 60.0
  * @decimal 1
  * @group DYT Guidance
  */

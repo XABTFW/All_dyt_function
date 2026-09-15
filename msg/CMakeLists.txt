@@ -75,6 +75,7 @@ set(msg_files
 	DytMidcourseLog.msg
 	DytStatusReply.msg
 	DytTarget.msg
+	DytTerminalGuidanceStatus.msg
 	Ekf2Timestamps.msg
 	EscReport.msg
 	EscStatus.msg

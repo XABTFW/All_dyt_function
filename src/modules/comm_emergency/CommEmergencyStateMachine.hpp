@@ -20,6 +20,7 @@ public:
 		bool rtl_feasible{false};
 		bool return_active{false};
 		bool resume_distance_allowed{false};
+		bool midcourse_requested{false};
 	};
 
 	static bool landedOrStatusUnavailable(uint64_t now_us, uint64_t timestamp_us, bool landed)
@@ -38,6 +39,13 @@ public:
 
 		switch (_state) {
 		case State::Idle:
+			if (!input.link_lost && input.return_active && input.midcourse_requested) {
+				_state = State::Resuming;
+				_resume_from_return = true;
+				_resume_midcourse_requested = true;
+				return Action::ResumeOffboard;
+			}
+
 			if (input.link_lost) {
 				_state = State::Holding;
 				_loss_started = now_us;
@@ -56,7 +64,7 @@ public:
 			}
 
 			if (!input.link_lost) {
-				const Action resume_action = resumeAction();
+				const Action resume_action = input.midcourse_requested ? Action::ResumeOffboard : resumeAction();
 
 				if (resume_action == Action::None) {
 					reset();
@@ -64,6 +72,7 @@ public:
 				} else {
 					_state = State::Resuming;
 					_resume_from_return = false;
+					_resume_midcourse_requested = input.midcourse_requested;
 				}
 
 				return resume_action;
@@ -78,6 +87,13 @@ public:
 			break;
 
 		case State::Committed:
+			if (!input.link_lost && input.return_active && input.midcourse_requested) {
+				_state = State::Resuming;
+				_resume_from_return = true;
+				_resume_midcourse_requested = true;
+				return Action::ResumeOffboard;
+			}
+
 			if (_return_recovery_allowed && !input.link_lost && input.return_active
 			    && input.resume_distance_allowed) {
 				const Action resume_action = resumeAction();
@@ -85,6 +101,7 @@ public:
 				if (resume_action != Action::None) {
 					_state = State::Resuming;
 					_resume_from_return = true;
+					_resume_midcourse_requested = false;
 					return resume_action;
 				}
 			}
@@ -102,10 +119,13 @@ public:
 				}
 
 				_resume_from_return = false;
+				_resume_midcourse_requested = false;
 
-			} else if (_resume_from_return && (!input.return_active || !input.resume_distance_allowed)) {
+			} else if (_resume_from_return &&
+				   (!input.return_active || (!_resume_midcourse_requested && !input.resume_distance_allowed))) {
 				_state = State::Committed;
 				_resume_from_return = false;
+				_resume_midcourse_requested = false;
 			}
 
 			break;
@@ -122,6 +142,7 @@ public:
 		_resume_offboard = false;
 		_return_recovery_allowed = false;
 		_resume_from_return = false;
+		_resume_midcourse_requested = false;
 	}
 
 	void resumeCompleted() { reset(); }
@@ -146,4 +167,5 @@ private:
 	bool _resume_offboard{false};
 	bool _return_recovery_allowed{false};
 	bool _resume_from_return{false};
+	bool _resume_midcourse_requested{false};
 };

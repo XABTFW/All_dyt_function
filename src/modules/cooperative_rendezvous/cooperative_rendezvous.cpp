@@ -93,10 +93,30 @@ bool CooperativeRendezvous::button_active(int button) const
 	return (_manual_control.buttons & (1u << button)) != 0;
 }
 
+bool CooperativeRendezvous::physical_rendezvous_request() const
+{
+	const int act_aux = _param_act_aux.get();
+	const int act_btn = _param_act_btn.get();
+
+	return (act_aux == 0 && act_btn < 0) || aux_switch_active(act_aux) || button_active(act_btn);
+}
+
+bool CooperativeRendezvous::phase_midcourse_requested() const
+{
+	return dyt_status_fresh()
+	       && (_dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE
+		   || _dyt_guidance_status.auto_midcourse_requested);
+}
+
 bool CooperativeRendezvous::rendezvous_switch_enabled() const
 {
+	if (_midcourse_operator_exit_blocked) {
+		return false;
+	}
+
 	if (dyt_status_fresh()) {
-		if (_dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE) {
+		if (_dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE
+		    || _dyt_guidance_status.auto_midcourse_requested) {
 			return true;
 		}
 
@@ -105,10 +125,43 @@ bool CooperativeRendezvous::rendezvous_switch_enabled() const
 		}
 	}
 
-	const int act_aux = _param_act_aux.get();
-	const int act_btn = _param_act_btn.get();
+	return physical_rendezvous_request();
+}
 
-	return (act_aux == 0 && act_btn < 0) || aux_switch_active(act_aux) || button_active(act_btn);
+void CooperativeRendezvous::update_operator_mode_exit(const vehicle_status_s &status)
+{
+	const bool phase_requested = phase_midcourse_requested();
+	const bool switch_requested = physical_rendezvous_request();
+
+	if (status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
+		_midcourse_operator_exit_blocked = false;
+		_midcourse_offboard_seen = false;
+		_previous_phase_midcourse_request = false;
+		return;
+	}
+
+	if (phase_requested && !_previous_phase_midcourse_request) {
+		_midcourse_operator_exit_blocked = false;
+	}
+
+	if (!phase_requested && !switch_requested) {
+		_midcourse_operator_exit_blocked = false;
+	}
+
+	const bool request_active = phase_requested || switch_requested || _gcs_midcourse_engaged;
+
+	if (!_midcourse_operator_exit_blocked && request_active && offboard_control_active(status)) {
+		_midcourse_offboard_seen = true;
+	}
+
+	if (_midcourse_offboard_seen && vehicle_status_fresh(status) && !status.failsafe
+	    && status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD) {
+		_midcourse_operator_exit_blocked = true;
+		_midcourse_offboard_seen = false;
+		_gcs_midcourse_engaged = false;
+	}
+
+	_previous_phase_midcourse_request = phase_requested;
 }
 
 bool CooperativeRendezvous::dyt_status_fresh() const
@@ -148,13 +201,30 @@ bool CooperativeRendezvous::offboard_control_active(const vehicle_status_s &stat
 	       && status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
 }
 
-bool CooperativeRendezvous::offboard_preparation_allowed(const vehicle_status_s &status) const
+bool CooperativeRendezvous::offboard_prestream_allowed(const vehicle_status_s &status) const
 {
-	if (!vehicle_status_fresh(status) || status.failsafe) {
+	if (!vehicle_status_fresh(status)) {
 		return false;
 	}
 
-	if (protected_navigation_state(status.nav_state_user_intention) && !_geofence_resume_pending) {
+	// Heartbeat publication is safe while Commander is finishing a requested
+	// transition to a pilot-controlled mode. This also lets an Offboard-loss
+	// failsafe clear without requiring an intermediate Stabilized selection.
+	const bool automatic_takeover = dyt_status_fresh() && _dyt_guidance_status.auto_midcourse_requested
+				       && status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+				       && status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_AUTO_LAND;
+
+	if (protected_navigation_state(status.nav_state_user_intention) && !_geofence_resume_pending
+	    && !automatic_takeover) {
+		return false;
+	}
+
+	return true;
+}
+
+bool CooperativeRendezvous::offboard_preparation_allowed(const vehicle_status_s &status) const
+{
+	if (status.failsafe || !offboard_prestream_allowed(status)) {
 		return false;
 	}
 
@@ -164,7 +234,11 @@ bool CooperativeRendezvous::offboard_preparation_allowed(const vehicle_status_s 
 
 	// A protected mode keeps ownership until the operator explicitly selects Offboard,
 	// except for the existing geofence-clear path which is allowed to resume automatically.
-	return _geofence_resume_pending
+	const bool automatic_takeover = dyt_status_fresh() && _dyt_guidance_status.auto_midcourse_requested
+				       && status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+				       && status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_LAND;
+
+	return _geofence_resume_pending || automatic_takeover
 	       || status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_OFFBOARD;
 }
 
@@ -263,22 +337,67 @@ void CooperativeRendezvous::publish_own_position(const vehicle_local_position_s 
 bool CooperativeRendezvous::update_target_from_link()
 {
 	follower_info_s info{};
-	bool updated = false;
+	const bool local_history_enabled = _param_history_enable.get() > 0;
+	const hrt_abstime now = hrt_absolute_time();
 
 	while (_follower_info_sub.update(&info)) {
 		const bool real_position_source = info.source == follower_info_s::SOURCE_REAL_POSITION ||
 						  info.source == follower_info_s::SOURCE_LEADER_REAL_POSITION;
+		const bool external_history_source = info.source == follower_info_s::SOURCE_SETPOINT;
 
 		if (info.mavid == _options.target_id && info.mavid != _vehicle_id &&
-		    real_position_source &&
 		    PX4_ISFINITE(info.lat) && PX4_ISFINITE(info.lon) && PX4_ISFINITE(info.alt)) {
-			_target_info = info;
-			_last_target_time = hrt_absolute_time();
-			updated = true;
+			if (real_position_source) {
+				_live_target_info = info;
+				_last_live_target_time = now;
+
+			} else if (external_history_source && !local_history_enabled) {
+				_external_history_info = info;
+				_last_external_history_time = now;
+			}
 		}
 	}
 
-	return updated;
+	if (local_history_enabled) {
+		_last_external_history_time = 0;
+	}
+
+	const float timeout_param = _param_target_timeout.get();
+	const float timeout_s = PX4_ISFINITE(timeout_param) ? math::constrain(timeout_param, 0.1f, 30.f) : 2.f;
+	const hrt_abstime timeout = static_cast<hrt_abstime>(timeout_s * 1_s);
+	const bool external_history_fresh = !local_history_enabled && _last_external_history_time != 0 &&
+						    _last_external_history_time <= now &&
+						    now - _last_external_history_time <= timeout;
+	const bool live_target_fresh = _last_live_target_time != 0 && _last_live_target_time <= now &&
+				       now - _last_live_target_time <= timeout;
+	const follower_info_s *selected_target = external_history_fresh ? &_external_history_info :
+						      (live_target_fresh ? &_live_target_info : nullptr);
+	const hrt_abstime selected_time = external_history_fresh ? _last_external_history_time : _last_live_target_time;
+
+	if (selected_target == nullptr) {
+		if (local_history_enabled && _target_info.source == follower_info_s::SOURCE_SETPOINT) {
+			_last_target_time = 0;
+			reset_target_filter();
+			reset_target_history();
+			reset_arrival_hold();
+		}
+
+		return false;
+	}
+
+	if (selected_time == _last_target_time && selected_target->source == _target_info.source) {
+		return false;
+	}
+
+	if (selected_target->source != _target_info.source) {
+		reset_target_filter();
+		reset_target_history();
+		reset_arrival_hold();
+	}
+
+	_target_info = *selected_target;
+	_last_target_time = selected_time;
+	return true;
 }
 
 void CooperativeRendezvous::update_gcs_setpoint()
@@ -1141,12 +1260,15 @@ void CooperativeRendezvous::Run()
 	_manual_control_sub.update(&_manual_control);
 	_dyt_guidance_status_sub.update(&_dyt_guidance_status);
 	_geofence_result_sub.update(&_geofence_result);
+	update_operator_mode_exit(status);
 
 	if (status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
 		_gcs_midcourse_engaged = false;
+		_offboard_prestream_start = 0;
 
-	} else if (dyt_status_fresh() &&
-		   _dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE) {
+	} else if (!_midcourse_operator_exit_blocked && dyt_status_fresh() &&
+		   (_dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE
+		    || _dyt_guidance_status.auto_midcourse_requested)) {
 		_gcs_midcourse_engaged = true;
 	}
 
@@ -1160,12 +1282,14 @@ void CooperativeRendezvous::Run()
 	update_gcs_setpoint();
 
 	if (!position_valid) {
+		_offboard_prestream_start = 0;
 		publish_status(status, false, false);
 		return;
 	}
 
 	if (active_role() == Role::Rendezvous) {
 		if (!rendezvous_switch_enabled()) {
+			_offboard_prestream_start = 0;
 			_geofence_rtl_active = false;
 			_geofence_resume_pending = false;
 			_geofence_clear_time = 0;
@@ -1178,6 +1302,7 @@ void CooperativeRendezvous::Run()
 		}
 
 		if (geofence_avoidance_required(status) || dyt_guidance_active()) {
+			_offboard_prestream_start = 0;
 			reset_velocity_slew();
 			reset_target_filter();
 			reset_target_history();
@@ -1190,6 +1315,7 @@ void CooperativeRendezvous::Run()
 			// Pre-stream only the Offboard heartbeat while changing modes. Publishing a
 			// trajectory here would race the active FlightTask on the shared uORB topic.
 			if (_geofence_resume_pending) {
+				_offboard_prestream_start = 0;
 				// A geofence clear and the Commander failsafe state are not published in the
 				// same cycle. Keep the heartbeat alive while Commander releases RTL, but do
 				// not request Offboard until the failsafe is clear and a target is fresh.
@@ -1204,10 +1330,24 @@ void CooperativeRendezvous::Run()
 					}
 				}
 
-			} else if (offboard_preparation_allowed(status)) {
+			} else if (offboard_prestream_allowed(status)) {
+				const hrt_abstime now = hrt_absolute_time();
 				publish_offboard_heartbeat(true, false);
-				request_arm(status);
-				request_offboard(status);
+
+				if (_offboard_prestream_start == 0 || now < _offboard_prestream_start) {
+					_offboard_prestream_start = now;
+				}
+
+				if (offboard_preparation_allowed(status)) {
+					request_arm(status);
+
+					if (now - _offboard_prestream_start >= kOffboardPrestreamDuration) {
+						request_offboard(status);
+					}
+				}
+
+			} else {
+				_offboard_prestream_start = 0;
 			}
 
 			reset_velocity_slew();
@@ -1219,6 +1359,7 @@ void CooperativeRendezvous::Run()
 
 		// Offboard is now the confirmed trajectory owner. Clearing this latch here
 		// also covers the GCS-target branch in run_rendezvous().
+		_offboard_prestream_start = 0;
 		_geofence_resume_pending = false;
 		_geofence_clear_time = 0;
 
@@ -1245,6 +1386,7 @@ void CooperativeRendezvous::Run()
 		}
 
 	} else {
+		_offboard_prestream_start = 0;
 		reset_velocity_slew();
 		reset_target_filter();
 		reset_target_history();

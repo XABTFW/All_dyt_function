@@ -66,12 +66,16 @@ private:
 	float aux_value(int index) const;
 	bool aux_switch_active(int index) const;
 	bool button_active(int button) const;
+	bool physical_rendezvous_request() const;
+	bool phase_midcourse_requested() const;
 	bool rendezvous_switch_enabled() const;
+	void update_operator_mode_exit(const vehicle_status_s &status);
 	bool dyt_status_fresh() const;
 	bool dyt_guidance_active() const;
 	bool vehicle_status_fresh(const vehicle_status_s &status) const;
 	bool protected_navigation_state(uint8_t nav_state) const;
 	bool offboard_control_active(const vehicle_status_s &status) const;
+	bool offboard_prestream_allowed(const vehicle_status_s &status) const;
 	bool offboard_preparation_allowed(const vehicle_status_s &status) const;
 	bool target_data_fresh() const;
 	void publish_status(const vehicle_status_s &status, bool local_position_is_valid, bool controlling_vehicle);
@@ -119,7 +123,11 @@ private:
 	MapProjection _map_ref{};
 
 	follower_info_s _target_info{};
+	follower_info_s _live_target_info{};
+	follower_info_s _external_history_info{};
 	hrt_abstime _last_target_time{0};
+	hrt_abstime _last_live_target_time{0};
+	hrt_abstime _last_external_history_time{0};
 	hrt_abstime _last_mode_request{0};
 	hrt_abstime _last_rtl_request{0};
 	hrt_abstime _last_arm_request{0};
@@ -128,6 +136,7 @@ private:
 	hrt_abstime _last_target_filter_time{0};
 	hrt_abstime _last_target_filter_sample_time{0};
 	hrt_abstime _last_gcs_setpoint_time{0};
+	hrt_abstime _offboard_prestream_start{0};
 	bool _failsafes_configured{false};
 	bool _target_filter_initialized{false};
 	bool _gcs_target_active{false};
@@ -138,6 +147,9 @@ private:
 	hrt_abstime _geofence_clear_time{0};
 	bool _trajectory_publication_allowed{false};
 	bool _gcs_midcourse_engaged{false};
+	bool _midcourse_operator_exit_blocked{false};
+	bool _midcourse_offboard_seen{false};
+	bool _previous_phase_midcourse_request{false};
 	hrt_abstime _arrival_hold_candidate_since{0};
 	int _target_history_head{0};
 	int _target_history_count{0};
@@ -149,6 +161,7 @@ private:
 	matrix::Vector3f _arrival_hold_position{};
 	gcs_trajectory_setpoint_s _gcs_setpoint{};
 	float _arrival_hold_yaw{NAN};
+	static constexpr hrt_abstime kOffboardPrestreamDuration{1_s};
 	static constexpr float kMaxTargetHistoryDurationS = 10.f;
 	static constexpr int kTargetHistoryLength = 220;
 	TargetHistorySample _target_history[kTargetHistoryLength]{};

@@ -1171,7 +1171,6 @@ MavlinkReceiver::handle_message_set_position_target_local_ned(mavlink_message_t 
 			// publish offboard_control_mode
 			ocm.timestamp = hrt_absolute_time();
 			_offboard_control_mode_pub.publish(ocm);
-			publish_gcs_trajectory_setpoint(setpoint, ocm.timestamp);
 
 			vehicle_status_s vehicle_status{};
 			_vehicle_status_sub.copy(&vehicle_status);
@@ -1294,7 +1293,6 @@ MavlinkReceiver::handle_message_set_position_target_global_int(mavlink_message_t
 			// publish offboard_control_mode
 			ocm.timestamp = hrt_absolute_time();
 			_offboard_control_mode_pub.publish(ocm);
-			publish_gcs_trajectory_setpoint(setpoint, ocm.timestamp);
 
 			vehicle_status_s vehicle_status{};
 			_vehicle_status_sub.copy(&vehicle_status);
@@ -3630,73 +3628,116 @@ MavlinkReceiver::handle_message_swarm_start_flag(mavlink_message_t *msg){
 void
 MavlinkReceiver::handle_message_uav_info(mavlink_message_t *msg)
 {
-		uav_info_s _uav_info{};
-		follower_info_s _follower_info{};
+	uav_info_s uav_info{};
+	follower_info_s follower_info{};
+	mavlink_uav_info_t mavlink_uav_info{};
+	mavlink_msg_uav_info_decode(msg, &mavlink_uav_info);
 
-		mavlink_uav_info_t  _uav_info_msg{};
-		mavlink_msg_uav_info_decode(msg, &_uav_info_msg);
+	const uint8_t point_source = mavlink_uav_info.point_source;
+	const bool precise_position = point_source != UAV_INFO_POINT_SOURCE_LEGACY;
+	const double latitude = precise_position ? static_cast<double>(mavlink_uav_info.lat_int) * 1e-7 :
+				static_cast<double>(mavlink_uav_info.lat);
+	const double longitude = precise_position ? static_cast<double>(mavlink_uav_info.lon_int) * 1e-7 :
+				 static_cast<double>(mavlink_uav_info.lon);
+	const bool position_valid = PX4_ISFINITE(latitude) && PX4_ISFINITE(longitude)
+				    && PX4_ISFINITE(mavlink_uav_info.rel_alt)
+				    && latitude >= -90. && latitude <= 90. && longitude >= -180. && longitude <= 180.;
 
-		// ★★★ 检查是否是主机的真实位置消息（mavid >= 100 表示避撞用的真实位置）★★★
-		bool is_leader_real_pos = (_uav_info_msg.mavid >= 100);
-		uint32_t actual_mavid = is_leader_real_pos ? (_uav_info_msg.mavid - 100) : _uav_info_msg.mavid;
+	if (!position_valid) {
+		return;
+	}
 
-		// ★★★ 直接使用消息中的 is_leader 字段，不再通过参数判断 ★★★
-		bool is_leader = (_uav_info_msg.is_leader == 1);
-		uint32_t group_id = _uav_info_msg.group_id;
+	if (point_source == UAV_INFO_POINT_SOURCE_GCS_DETOUR) {
+		const bool addressed_to_this_system = mavlink_uav_info.target_system == 0
+				|| mavlink_uav_info.target_system == mavlink_system.sysid;
+		const bool addressed_to_this_component = mavlink_uav_info.target_component == 0
+				|| mavlink_uav_info.target_component == mavlink_system.compid;
 
-		if (is_leader && !is_leader_real_pos) {
-			// 主机的目标位置消息 → 发布到 uav_info（用于从机跟随）
-			_uav_info.timestamp = hrt_absolute_time();
-			_uav_info.mavid = actual_mavid;
-			_uav_info.group_id = group_id;
-			_uav_info.is_leader = true;
-			_uav_info.lat = _uav_info_msg.lat;
-			_uav_info.lon = _uav_info_msg.lon;
-			_uav_info.alt = _uav_info_msg.rel_alt;
-			_uav_info.vx  = _uav_info_msg.vx;
-			_uav_info.vy  = _uav_info_msg.vy;
-			_uav_info.vz  = _uav_info_msg.vz;
-			_uav_info.yaw = _uav_info_msg.yaw;
-			_uav_info.yawspeed = _uav_info_msg.yaw_speed;
-			_uav_info.land = _uav_info_msg.land;
-			_uav_info_pub.publish(_uav_info);
-
-		} else if (is_leader && is_leader_real_pos) {
-			// ★★★ 主机的真实位置消息 → 发布到 follower_info（用于避撞）★★★
-			_follower_info.timestamp = hrt_absolute_time();
-			_follower_info.mavid = actual_mavid;
-			_follower_info.lat = _uav_info_msg.lat;
-			_follower_info.lon = _uav_info_msg.lon;
-			_follower_info.alt = _uav_info_msg.rel_alt;
-			_follower_info.vx  = _uav_info_msg.vx;
-			_follower_info.vy  = _uav_info_msg.vy;
-			_follower_info.vz  = _uav_info_msg.vz;
-			_follower_info.yaw = _uav_info_msg.yaw;
-			_follower_info.yawspeed = _uav_info_msg.yaw_speed;
-			// 从land字段解析: Bit 0 = landing, Bit 1 = at_target
-			_follower_info.land = _uav_info_msg.land & 0x01;
-			_follower_info.at_target = (_uav_info_msg.land & 0x02) ? 1 : 0;
-			_follower_info.source = follower_info_s::SOURCE_LEADER_REAL_POSITION;
-			_follower_info_pub.publish(_follower_info);
-
-		} else {
-			// 从机的真实位置消息 → 发布到 follower_info（用于避撞）
-			_follower_info.timestamp = hrt_absolute_time();
-			_follower_info.mavid = actual_mavid;
-			_follower_info.lat = _uav_info_msg.lat;
-			_follower_info.lon = _uav_info_msg.lon;
-			_follower_info.alt = _uav_info_msg.rel_alt;
-			_follower_info.vx  = _uav_info_msg.vx;
-			_follower_info.vy  = _uav_info_msg.vy;
-			_follower_info.vz  = _uav_info_msg.vz;
-			_follower_info.yaw = _uav_info_msg.yaw;
-			_follower_info.yawspeed = _uav_info_msg.yaw_speed;
-			// 从land字段解析: Bit 0 = landing, Bit 1 = at_target
-			_follower_info.land = _uav_info_msg.land & 0x01;
-			_follower_info.at_target = (_uav_info_msg.land & 0x02) ? 1 : 0;
-			_follower_info.source = follower_info_s::SOURCE_REAL_POSITION;
-			_follower_info_pub.publish(_follower_info);
+		if (!_mavlink.get_forward_externalsp() || !addressed_to_this_system || !addressed_to_this_component) {
+			return;
 		}
+
+		vehicle_local_position_s local_pos{};
+		_vehicle_local_position_sub.copy(&local_pos);
+
+		if (!local_pos.xy_global || !local_pos.z_global || !PX4_ISFINITE(local_pos.ref_lat)
+		    || !PX4_ISFINITE(local_pos.ref_lon) || !PX4_ISFINITE(local_pos.ref_alt)) {
+			return;
+		}
+
+		trajectory_setpoint_s setpoint{};
+		MapProjection global_local_projection{local_pos.ref_lat, local_pos.ref_lon, local_pos.ref_timestamp};
+		global_local_projection.project(latitude, longitude, setpoint.position[0], setpoint.position[1]);
+		setpoint.position[2] = local_pos.ref_alt - mavlink_uav_info.rel_alt;
+		setpoint.velocity[0] = mavlink_uav_info.vx;
+		setpoint.velocity[1] = mavlink_uav_info.vy;
+		setpoint.velocity[2] = mavlink_uav_info.vz;
+		setpoint.yaw = mavlink_uav_info.yaw;
+		publish_gcs_trajectory_setpoint(setpoint, hrt_absolute_time());
+		return;
+	}
+
+	if (point_source == UAV_INFO_POINT_SOURCE_TARGET || point_source == UAV_INFO_POINT_SOURCE_HISTORY) {
+		follower_info.timestamp = hrt_absolute_time();
+		follower_info.mavid = mavlink_uav_info.mavid;
+		follower_info.lat = latitude;
+		follower_info.lon = longitude;
+		follower_info.alt = mavlink_uav_info.rel_alt;
+		follower_info.vx = mavlink_uav_info.vx;
+		follower_info.vy = mavlink_uav_info.vy;
+		follower_info.vz = mavlink_uav_info.vz;
+		follower_info.yaw = mavlink_uav_info.yaw;
+		follower_info.yawspeed = mavlink_uav_info.yaw_speed;
+		follower_info.land = mavlink_uav_info.land & 0x01;
+		follower_info.at_target = (mavlink_uav_info.land & 0x02) ? 1 : 0;
+		follower_info.source = point_source == UAV_INFO_POINT_SOURCE_HISTORY ? follower_info_s::SOURCE_SETPOINT :
+				       follower_info_s::SOURCE_REAL_POSITION;
+		_follower_info_pub.publish(follower_info);
+		return;
+	}
+
+	if (point_source != UAV_INFO_POINT_SOURCE_LEGACY) {
+		return;
+	}
+
+	// Preserve the old UAV_INFO encoding for aircraft that have not yet been updated.
+	const bool is_leader_real_pos = mavlink_uav_info.mavid >= 100;
+	const uint32_t actual_mavid = is_leader_real_pos ? mavlink_uav_info.mavid - 100 : mavlink_uav_info.mavid;
+	const bool is_leader = mavlink_uav_info.is_leader == 1;
+
+	if (is_leader && !is_leader_real_pos) {
+		uav_info.timestamp = hrt_absolute_time();
+		uav_info.mavid = actual_mavid;
+		uav_info.group_id = mavlink_uav_info.group_id;
+		uav_info.is_leader = true;
+		uav_info.lat = latitude;
+		uav_info.lon = longitude;
+		uav_info.alt = mavlink_uav_info.rel_alt;
+		uav_info.vx = mavlink_uav_info.vx;
+		uav_info.vy = mavlink_uav_info.vy;
+		uav_info.vz = mavlink_uav_info.vz;
+		uav_info.yaw = mavlink_uav_info.yaw;
+		uav_info.yawspeed = mavlink_uav_info.yaw_speed;
+		uav_info.land = mavlink_uav_info.land;
+		_uav_info_pub.publish(uav_info);
+
+	} else {
+		follower_info.timestamp = hrt_absolute_time();
+		follower_info.mavid = actual_mavid;
+		follower_info.lat = latitude;
+		follower_info.lon = longitude;
+		follower_info.alt = mavlink_uav_info.rel_alt;
+		follower_info.vx = mavlink_uav_info.vx;
+		follower_info.vy = mavlink_uav_info.vy;
+		follower_info.vz = mavlink_uav_info.vz;
+		follower_info.yaw = mavlink_uav_info.yaw;
+		follower_info.yawspeed = mavlink_uav_info.yaw_speed;
+		follower_info.land = mavlink_uav_info.land & 0x01;
+		follower_info.at_target = (mavlink_uav_info.land & 0x02) ? 1 : 0;
+		follower_info.source = is_leader ? follower_info_s::SOURCE_LEADER_REAL_POSITION :
+				       follower_info_s::SOURCE_REAL_POSITION;
+		_follower_info_pub.publish(follower_info);
+	}
 }
 
 void

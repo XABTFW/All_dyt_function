@@ -6,6 +6,11 @@ uint8 TRACKING_STATE_LOCKED = 1
 uint8 TRACKING_STATE_TIMEOUT = 2
 uint8 TRACKING_STATE_ERROR = 3
 
+uint8 SERVO_STATUS_UNKNOWN = 0
+uint8 SERVO_STATUS_ONLINE = 1
+uint8 SERVO_STATUS_TIMEOUT = 2
+uint8 SERVO_STATUS_DATA_ERROR = 3
+
 uint8 VIDEO_SOURCE_VIS_1 = 0
 uint8 VIDEO_SOURCE_VIS_2 = 1
 uint8 VIDEO_SOURCE_IR_1 = 2
@@ -60,3 +65,12 @@ uint8 status1  # recognition status from protocol bytes 37-38: 100 detected, 0 n
 uint8 status2
 uint8 status3
 uint8 self_test_raw
+
+# Raw protocol fields required by the ground station.
+int16 miss_x_px  # azimuth miss, servo-status bytes 33-34, big-endian
+int16 miss_y_px  # elevation miss, servo-status bytes 35-36, big-endian
+uint8 servo_mode # servo-status byte 7: 0x00..0x0A or 0xAA
+uint8 servo_status
+
+bool software_version_valid
+char[8] tracker_software_version # tracker reply 0x35, raw 8-byte version

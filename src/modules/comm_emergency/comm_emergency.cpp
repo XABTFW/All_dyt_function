@@ -158,6 +158,7 @@ void CommEmergency::Run()
 
 	_vehicle_status_sub.update(&_vehicle_status);
 	_land_detected_sub.update(&_land_detected);
+	_dyt_guidance_status_sub.update(&_dyt_guidance_status);
 	_rtl_time_estimate_sub.update(&_rtl_time_estimate);
 	const bool local_position_updated = _vehicle_local_position_sub.update(&_vehicle_local_position);
 	const hrt_abstime now = hrt_absolute_time();
@@ -258,6 +259,13 @@ void CommEmergency::Run()
 	input.battery_below_threshold = battery_remaining_valid && _battery_remaining < battery_threshold;
 	input.rtl_feasible = _rtl_feasible;
 	input.return_active = _vehicle_status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL;
+	const bool guidance_status_fresh = _dyt_guidance_status.timestamp != 0
+					   && _dyt_guidance_status.timestamp <= now
+					   && now - _dyt_guidance_status.timestamp < 500_ms;
+	input.midcourse_requested = !_vehicle_status.failsafe && guidance_status_fresh
+				    && _dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE
+				    && _dyt_guidance_status.command_phase == dyt_guidance_status_s::PHASE_MIDCOURSE
+				    && _dyt_guidance_status.command_result == dyt_guidance_status_s::COMMAND_RESULT_PENDING;
 	// Resume the original Mission/Offboard only below 2 km of accumulated horizontal flight distance.
 	input.resume_distance_allowed = !_vehicle_status.failsafe && _flight_distance_tracker.valid(now)
 					&& _flight_distance_tracker.distanceM() < RESUME_DISTANCE_LIMIT_M;

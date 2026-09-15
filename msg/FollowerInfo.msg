@@ -18,3 +18,5 @@ uint8 SOURCE_LEADER_REAL_POSITION = 2
 uint8 SOURCE_SETPOINT = 3
 
 uint8 source      # source classification for consumers that need real aircraft position
+
+uint8 ORB_QUEUE_LENGTH = 8

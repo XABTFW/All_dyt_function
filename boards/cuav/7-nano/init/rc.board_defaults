@@ -56,8 +56,8 @@ param set-default DYTG_ALP_VMIN 1
 
 # 重新锁定前云台回中后的稳定等待时间，单位 ms。
 param set-default DYTG_CTRMS 400
-# 导引头图像、遥测与控制链路的固定延迟，单位 ms。
-param set-default DYTG_DLY_MS 120
+# 跟踪脱靶量从算法采样到飞控收包的延迟，单位 ms；厂家给出的最大值约为 30 ms。
+param set-default DYTG_DLY_MS 30
 # 允许进入拦截状态的机头前向圆锥半角，单位度。
 param set-default DYTG_FCONE 40
 # 控制中途阶段是否使用导引头地理坐标跟踪协议。
@@ -291,6 +291,10 @@ param set-default CRDZ_VSLEW 3
 #param set-default CRDZ_Y_OFF 0
 # 选择中途阶段使用的云台角度命令模式。
 param set-default DYTG_MNT_MODE 0
+
+
+
+param set-default DYTG_COOP_EN 1
 # 选择中途制导目标高度的解释方式。
 param set-default DYTG_ALT_MODE 1
 param set-default DYTG_AUTO_EN 0

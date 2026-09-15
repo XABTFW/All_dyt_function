@@ -55,6 +55,7 @@ uint8 command_phase               # phase carried by the latest received GCS com
 uint8 command_result
 
 bool net_trigger_sent             # net-capture trigger command was sent in this terminal session
+bool auto_midcourse_requested     # onboard height trigger is requesting midcourse guidance
 bool midcourse_active
 bool midcourse_target_valid
 

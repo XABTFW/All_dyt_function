@@ -60,9 +60,10 @@ void LoggedTopics::add_default_topics()
 	add_topic("cpuload");
 	add_topic("distance_sensor_mode_change_request");
 	add_optional_topic("dyt_command");
-	add_optional_topic("dyt_guidance_status", 100);
-	add_optional_topic("dyt_midcourse_log", 100);
-	add_optional_topic("dyt_target", 100);
+	add_optional_topic("dyt_guidance_status", 20);
+	add_optional_topic("dyt_midcourse_log", 50);
+	add_optional_topic("dyt_target", 20);
+	add_optional_topic("dyt_terminal_guidance_status", 20);
 	add_topic_multi("dronecan_node_status", 250);
 	add_optional_topic("external_ins_attitude");
 	add_optional_topic("external_ins_global_position");

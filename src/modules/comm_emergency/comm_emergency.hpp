@@ -12,6 +12,7 @@
 #include <uORB/SubscriptionInterval.hpp>
 #include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/dyt_guidance_status.h>
 #include <uORB/topics/offboard_control_mode.h>
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/rtl_time_estimate.h>
@@ -59,11 +60,13 @@ private:
 
 	vehicle_status_s _vehicle_status{};
 	vehicle_land_detected_s _land_detected{};
+	dyt_guidance_status_s _dyt_guidance_status{};
 	rtl_time_estimate_s _rtl_time_estimate{};
 	vehicle_local_position_s _vehicle_local_position{};
 
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::Subscription _land_detected_sub{ORB_ID(vehicle_land_detected)};
+	uORB::Subscription _dyt_guidance_status_sub{ORB_ID(dyt_guidance_status)};
 	uORB::Subscription _rtl_time_estimate_sub{ORB_ID(rtl_time_estimate)};
 	uORB::Subscription _vehicle_local_position_sub{ORB_ID(vehicle_local_position)};
 	uORB::SubscriptionMultiArray<battery_status_s, battery_status_s::MAX_INSTANCES> _battery_status_subs{

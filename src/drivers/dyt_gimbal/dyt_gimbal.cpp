@@ -87,6 +87,7 @@ private:
 	static constexpr uint8_t TRACKER_ASSIST_ENABLE{0x24};
 	static constexpr uint8_t TRACKER_ASSIST_DISABLE{0x25};
 	static constexpr uint8_t TRACKER_TARGET_ID{0x26};
+	static constexpr uint8_t TRACKER_SOFTWARE_VERSION_READ{0x35};
 	static constexpr uint8_t TRACKER_IMAGE_MODE{0x37};
 	static constexpr uint16_t IMAGE_MODE_VISIBLE{0};
 	static constexpr uint16_t IMAGE_MODE_INFRARED{1};
@@ -94,6 +95,8 @@ private:
 	static constexpr uint8_t IMAGE_STATUS_INFRARED{0x02};
 	static constexpr uint16_t RECOGNITION_TARGET_DETECTED{100};
 	static constexpr hrt_abstime IMAGE_SOURCE_CONFIRM_TIMEOUT{1_s};
+	static constexpr hrt_abstime SOFTWARE_VERSION_RETRY_INTERVAL{1_s};
+	static constexpr uint8_t SOFTWARE_VERSION_MAX_REQUESTS{3};
 	static constexpr uint8_t TRACKER_OSD_ENABLE{0x07};
 	static constexpr uint8_t TRACKER_OSD_DISABLE{0x08};
 	static constexpr uint8_t TRACKER_DETECTION_START{0x2B};
@@ -118,6 +121,7 @@ private:
 	void handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_abstime now);
 	void handle_payload_status(const uint8_t *frame, size_t frame_len, hrt_abstime now);
 	void handle_laser_status(const uint8_t *frame, size_t frame_len, hrt_abstime now);
+	void handle_tracker_status(const uint8_t *frame, size_t frame_len, hrt_abstime now);
 	void publish_generic_reply(const uint8_t *frame, size_t frame_len, hrt_abstime now);
 	void publish_link_state(hrt_abstime now, uint8_t tracking_state);
 	void maybe_log_target(const dyt_target_s &target, uint8_t raw_tracking_state);
@@ -139,6 +143,7 @@ private:
 	bool drain_tx_queue();
 	void reset_tx_queue();
 	bool send_detection_start_if_needed();
+	void request_software_version_if_needed(hrt_abstime now);
 	void send_startup_home_if_needed(hrt_abstime now);
 
 	void publish_shell_command(uint8_t command);
@@ -213,6 +218,10 @@ private:
 	bool _image_source_confirmation_warned{false};
 	uint8_t _requested_image_status{0};
 	hrt_abstime _image_source_request_time{0};
+	uint8_t _tracker_software_version[8]{};
+	uint8_t _software_version_request_count{0};
+	hrt_abstime _last_software_version_request{0};
+	bool _software_version_valid{false};
 
 	dyt_target_s _last_target{};
 
@@ -357,6 +366,12 @@ void DytGimbal::Run()
 	if (!tx_queue_busy) {
 		handle_command_updates();
 		send_startup_home_if_needed(now_after_read);
+
+		// Status reads are lower priority than mode/lock commands and only start
+		// at an empty frame boundary.
+		if (_tx_queue_count == 0) {
+			request_software_version_if_needed(now_after_read);
+		}
 	}
 
 	const hrt_abstime timeout_us = static_cast<hrt_abstime>(math::max(_param_dyt_timeout_ms.get(), int32_t{50})) * 1000ULL;
@@ -422,6 +437,10 @@ bool DytGimbal::open_serial()
 	_infrared_horizontal_fov_deg = NAN;
 	_visible_zoom = NAN;
 	_infrared_zoom = NAN;
+	memset(_tracker_software_version, 0, sizeof(_tracker_software_version));
+	_software_version_request_count = 0;
+	_last_software_version_request = 0;
+	_software_version_valid = false;
 	_mode_control = MODE_DISABLE;
 	memset(_mode_params, 0, sizeof(_mode_params));
 	_startup_home_sent = false;
@@ -623,6 +642,10 @@ void DytGimbal::handle_frame(const uint8_t *frame, size_t frame_len, hrt_abstime
 		handle_laser_status(frame, frame_len, now);
 		break;
 
+	case FRAME_ID_TRACKER:
+		handle_tracker_status(frame, frame_len, now);
+		break;
+
 	default:
 		publish_generic_reply(frame, frame_len, now);
 		break;
@@ -646,6 +669,10 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 	target.status1 = recognition_status <= UINT8_MAX ? static_cast<uint8_t>(recognition_status) : UINT8_MAX;
 	target.status2 = frame[31];
 	target.status3 = frame[5];
+	target.servo_mode = frame[6];
+	target.servo_status = dyt_target_s::SERVO_STATUS_ONLINE;
+	target.software_version_valid = _software_version_valid;
+	memcpy(target.tracker_software_version, _tracker_software_version, sizeof(target.tracker_software_version));
 	const bool image_status_valid = frame[5] == IMAGE_STATUS_VISIBLE || frame[5] == IMAGE_STATUS_INFRARED;
 
 	if (_image_source_confirmation_pending && frame[5] == _requested_image_status) {
@@ -675,6 +702,8 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 
 	const int16_t raw_los_x = read_be_s16(frame, 32);
 	const int16_t raw_los_y = read_be_s16(frame, 34);
+	target.miss_x_px = raw_los_x;
+	target.miss_y_px = raw_los_y;
 	const float horizontal_fov_deg = image_source_confirmed ?
 					 (infrared_source ? _infrared_horizontal_fov_deg : _visible_horizontal_fov_deg) : NAN;
 	const int32_t image_width_px = infrared_source ? _param_dyt_infrared_width_px.get() :
@@ -720,6 +749,7 @@ void DytGimbal::handle_servo_status(const uint8_t *frame, size_t frame_len, hrt_
 
 	if (!finite_attitude) {
 		target.tracking_state = dyt_target_s::TRACKING_STATE_ERROR;
+		target.servo_status = dyt_target_s::SERVO_STATUS_DATA_ERROR;
 		target.target_valid = false;
 		++_parse_error_count;
 	}
@@ -824,6 +854,18 @@ void DytGimbal::handle_laser_status(const uint8_t *frame, size_t frame_len, hrt_
 	publish_generic_reply(frame, frame_len, now);
 }
 
+void DytGimbal::handle_tracker_status(const uint8_t *frame, size_t frame_len, hrt_abstime now)
+{
+	// Tracker status 0x35 contains eight raw software-version characters
+	// in bytes 7..14 of the 15-byte status frame.
+	if (frame_len == 15 && frame[2] == 0x0B && frame[4] == TRACKER_SOFTWARE_VERSION_READ) {
+		memcpy(_tracker_software_version, &frame[6], sizeof(_tracker_software_version));
+		_software_version_valid = true;
+	}
+
+	publish_generic_reply(frame, frame_len, now);
+}
+
 void DytGimbal::publish_generic_reply(const uint8_t *frame, size_t frame_len, hrt_abstime now)
 {
 	dyt_status_reply_s reply{};
@@ -852,6 +894,8 @@ void DytGimbal::publish_link_state(hrt_abstime now, uint8_t tracking_state)
 	target.timestamp = now;
 	target.timestamp_sample = _last_servo_time;
 	target.tracking_state = tracking_state;
+	target.servo_status = tracking_state == dyt_target_s::TRACKING_STATE_TIMEOUT ?
+			      dyt_target_s::SERVO_STATUS_TIMEOUT : dyt_target_s::SERVO_STATUS_DATA_ERROR;
 	target.target_valid = false;
 	target.frame_counter = _frame_counter;
 	target.parse_error_count = _parse_error_count;
@@ -1357,6 +1401,20 @@ bool DytGimbal::send_detection_start_if_needed()
 	maybe_log_raw_frame("DYT V2 tx", detection_start_frame, sizeof(detection_start_frame));
 	PX4_INFO("target detection started on arm");
 	return true;
+}
+
+void DytGimbal::request_software_version_if_needed(hrt_abstime now)
+{
+	if (_software_version_valid || _software_version_request_count >= SOFTWARE_VERSION_MAX_REQUESTS ||
+	    (_last_software_version_request != 0 &&
+	     now - _last_software_version_request < SOFTWARE_VERSION_RETRY_INTERVAL)) {
+		return;
+	}
+
+	if (send_tracker_command(TRACKER_SOFTWARE_VERSION_READ)) {
+		_last_software_version_request = now;
+		++_software_version_request_count;
+	}
 }
 
 void DytGimbal::send_startup_home_if_needed(hrt_abstime now)

@@ -44,6 +44,98 @@ TEST(CommEmergencyStateMachine, NormalReturnWithHealthyLinkIsUnaffected)
 	EXPECT_EQ(machine.state(), CommEmergencyStateMachine::State::Idle);
 }
 
+TEST(CommEmergencyStateMachine, MidcourseCommandOverridesManualReturn)
+{
+	CommEmergencyStateMachine machine;
+	CommEmergencyStateMachine::Input input{};
+	input.armed = true;
+	input.landed = false;
+	input.return_active = true;
+	input.midcourse_requested = true;
+
+	EXPECT_EQ(machine.update(1'000'000, input, 30'000'000),
+		  CommEmergencyStateMachine::Action::ResumeOffboard);
+	EXPECT_TRUE(machine.resumeFromReturn());
+}
+
+TEST(CommEmergencyStateMachine, MidcourseCommandOverridesReturnAboveDistanceLimit)
+{
+	CommEmergencyStateMachine machine;
+	CommEmergencyStateMachine::Input input{};
+	input.armed = true;
+	input.landed = false;
+	input.offboard_intended = true;
+	input.link_lost = true;
+	machine.update(1'000'000, input, 30'000'000);
+	machine.update(31'000'000, input, 30'000'000);
+
+	input.link_lost = false;
+	input.return_active = true;
+	input.resume_distance_allowed = false;
+	input.midcourse_requested = true;
+	EXPECT_EQ(machine.update(32'000'000, input, 30'000'000),
+		  CommEmergencyStateMachine::Action::ResumeOffboard);
+	EXPECT_TRUE(machine.resumeFromReturn());
+	EXPECT_EQ(machine.update(32'100'000, input, 30'000'000), CommEmergencyStateMachine::Action::None);
+	EXPECT_EQ(machine.state(), CommEmergencyStateMachine::State::Resuming);
+}
+
+TEST(CommEmergencyStateMachine, AutomaticReturnResumeStillRequiresDistanceLimit)
+{
+	CommEmergencyStateMachine machine;
+	CommEmergencyStateMachine::Input input{};
+	input.armed = true;
+	input.landed = false;
+	input.offboard_intended = true;
+	input.link_lost = true;
+	machine.update(1'000'000, input, 30'000'000);
+	machine.update(31'000'000, input, 30'000'000);
+
+	input.link_lost = false;
+	input.return_active = true;
+	input.resume_distance_allowed = true;
+	EXPECT_EQ(machine.update(32'000'000, input, 30'000'000),
+		  CommEmergencyStateMachine::Action::ResumeOffboard);
+
+	input.resume_distance_allowed = false;
+	EXPECT_EQ(machine.update(32'100'000, input, 30'000'000), CommEmergencyStateMachine::Action::None);
+	EXPECT_EQ(machine.state(), CommEmergencyStateMachine::State::Committed);
+}
+
+TEST(CommEmergencyStateMachine, MidcourseCommandWaitsForLinkRecovery)
+{
+	CommEmergencyStateMachine machine;
+	CommEmergencyStateMachine::Input input{};
+	input.armed = true;
+	input.landed = false;
+	input.return_active = true;
+	input.link_lost = true;
+	input.midcourse_requested = true;
+
+	EXPECT_EQ(machine.update(1'000'000, input, 30'000'000), CommEmergencyStateMachine::Action::Hold);
+	EXPECT_EQ(machine.state(), CommEmergencyStateMachine::State::Holding);
+}
+
+TEST(CommEmergencyStateMachine, MidcourseCommandOverridesBatteryTriggeredReturn)
+{
+	CommEmergencyStateMachine machine;
+	CommEmergencyStateMachine::Input input{};
+	input.armed = true;
+	input.landed = false;
+	input.link_lost = true;
+	input.battery_below_threshold = true;
+	input.rtl_feasible = true;
+	EXPECT_EQ(machine.update(1'000'000, input, 30'000'000), CommEmergencyStateMachine::Action::Hold);
+	EXPECT_EQ(machine.update(2'000'000, input, 30'000'000), CommEmergencyStateMachine::Action::Return);
+
+	input.link_lost = false;
+	input.return_active = true;
+	input.midcourse_requested = true;
+	EXPECT_EQ(machine.update(3'000'000, input, 30'000'000),
+		  CommEmergencyStateMachine::Action::ResumeOffboard);
+	EXPECT_TRUE(machine.resumeFromReturn());
+}
+
 TEST(CommEmergencyStateMachine, RecoversOffboardDuringHold)
 {
 	CommEmergencyStateMachine machine;

@@ -143,6 +143,13 @@ private:
 			msg.status2 = target.status2;
 			msg.status3 = target.status3;
 			msg.self_test_raw = target.self_test_raw;
+			msg.miss_x_px = target.miss_x_px;
+			msg.miss_y_px = target.miss_y_px;
+			msg.servo_mode = target.servo_mode;
+			msg.servo_status = target.servo_status;
+			msg.software_version_valid = target.software_version_valid;
+			memcpy(msg.tracker_software_version, target.tracker_software_version,
+			       sizeof(msg.tracker_software_version));
 			mavlink_msg_dyt_target_status_send_struct(_mavlink->get_channel(), &msg);
 			sent = true;
 		}
