@@ -199,6 +199,7 @@ private:
 	bool activation_requested() const;
 	bool midcourse_switch_active() const;
 	void update_midcourse_switch_request();
+	void exit_terminal_for_midcourse_request();
 	bool midcourse_switch_requested() const;
 	bool midcourse_pointing_requested() const;
 	bool manual_fire_requested() const;
@@ -897,7 +898,7 @@ bool DytGuidance::semi_target_ready() const
 {
 	return _semi_target_selected && _semi_selection_time != 0 &&
 	       _last_target.timestamp >= _semi_selection_time && target_locked() &&
-	       target_fresh() && target_geometry_valid();
+	       target_fresh();
 }
 
 uint8_t DytGuidance::semi_auto_state() const
@@ -1258,6 +1259,10 @@ void DytGuidance::handle_ground_guidance_commands(hrt_abstime now)
 		if (valid_phase && phase_preconditions_ok) {
 			_gcs_phase_request = command.phase;
 
+			if (command.phase == dyt_guidance_command_s::PHASE_MIDCOURSE) {
+				exit_terminal_for_midcourse_request();
+			}
+
 			if (semi_terminal_request) {
 				_semi_guidance_confirmed = true;
 			}
@@ -1450,9 +1455,37 @@ void DytGuidance::update_midcourse_switch_request()
 	if (switch_active && !_previous_midcourse_switch_active) {
 		_midcourse_switch_latched = true;
 		_midcourse_operator_exit_blocked = false;
+
+		const bool midcourse_preconditions_ok =
+			_vehicle_local_position.xy_valid && _vehicle_local_position.z_valid
+			&& local_position_global_valid() && _param_coop_enable.get() > 0;
+
+		if (midcourse_preconditions_ok) {
+			// The RC switch request supersedes a previous GCS terminal request.
+			// Keep the switch latched when it is moved low so the low position does
+			// not turn midcourse off; another rising edge acts as a new request.
+			_gcs_phase_request = 0;
+			exit_terminal_for_midcourse_request();
+		}
 	}
 
 	_previous_midcourse_switch_active = switch_active;
+}
+
+void DytGuidance::exit_terminal_for_midcourse_request()
+{
+	if (_state == TaskState::Idle || _state == TaskState::Abort) {
+		return;
+	}
+
+	// Do not rely on an activation-request falling edge: fully automatic
+	// terminal guidance may have started from recognition while it was low.
+	// Capture the current request level so another already-high activation source
+	// cannot create a false rising edge and immediately re-enter terminal guidance.
+	_automatic_rearm_blocked = true;
+	_automatic_operator_exit_blocked = true;
+	_prev_activation_request = activation_requested();
+	deactivate_guidance(dyt_guidance_status_s::LOST_REASON_MANUAL);
 }
 
 bool DytGuidance::midcourse_switch_requested() const
