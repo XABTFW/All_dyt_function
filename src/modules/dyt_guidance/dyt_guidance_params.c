@@ -694,18 +694,19 @@ PARAM_DEFINE_FLOAT(DYTG_RNG_MAX, 0.f);
 /**
  * Net release pitch action duration
  *
- * Duration of the line-of-sight alignment action after the manual or image
- * distance trigger. With the default 300 ms action, the gripper PWM command is
- * sent at 250 ms and the original post-release hold/braking logic starts when
- * the action ends at 300 ms. If set below 250 ms, PWM is sent at action end.
- * Set to 0 to release immediately without the attitude action.
+ * Maximum duration of the line-of-sight alignment action after the manual or
+ * fused-distance trigger. Automatic release ends this action at the configured
+ * timeout or 50 ms after the gripper PWM command, whichever is earlier. During
+ * the action the attitude correction is recomputed every control cycle. Set to
+ * 0 to disable the attitude action; automatic release then uses only the final
+ * fused-distance threshold.
  *
  * @unit ms
  * @min 0
- * @max 2000
+ * @max 500
  * @group DYT Guidance
  */
-PARAM_DEFINE_INT32(DYTG_SZ_MS, 300);
+PARAM_DEFINE_INT32(DYTG_SZ_MS, 500);
 
 /**
  * Adaptive net release pitch gain
@@ -753,9 +754,9 @@ PARAM_DEFINE_FLOAT(DYTG_ALP_VMIN, 1.0f);
 /**
  * Manual net release AUX channel
  *
- * Starts the same adaptive pitch action and delayed gripper release sequence as
- * the automatic bounding-box trigger. This bypasses the image-area threshold and
- * is intended for manual visual confirmation of the target.
+ * Starts the adaptive pitch action and delayed gripper release sequence. This
+ * bypasses the fused-distance thresholds and is intended for manual visual
+ * confirmation of the target.
  *
  * @value -1 Disabled
  * @value 1 AUX1
@@ -771,9 +772,9 @@ PARAM_DEFINE_INT32(DYTG_FIRE_AUX, -1);
 /**
  * Manual net release joystick button
  *
- * Starts the same adaptive pitch action and delayed gripper release sequence as
- * the automatic bounding-box trigger. Button numbers match the zero-based numbering
- * shown by QGroundControl.
+ * Starts the manual adaptive pitch action and delayed gripper release sequence,
+ * bypassing the fused-distance thresholds. Button numbers match the zero-based
+ * numbering shown by QGroundControl.
  *
  * @value -1 Disabled
  * @min -1
@@ -788,9 +789,11 @@ PARAM_DEFINE_INT32(DYTG_FIRE_BTN, -1);
  * A fresh locked visible-light or infrared target at zoom 1.0 is always
  * required. The long-side image estimate uses the active source resolution and
  * provides continuity, while fresh gated SDM50 range and closing speed calibrate
- * it. During laser dropouts the calibrated image estimate is used. Release starts
- * when fused range is no greater than fused closing_speed * 0.3 s + DYTG_FIRE_D.
- * The area fit remains diagnostic only.
+ * it. During laser dropouts the calibrated image estimate is used. Attitude
+ * alignment starts when fused range is less than fused closing speed * 0.3 s
+ * + DYTG_FIRE_D. The gripper PWM is sent when fused range is less than fused
+ * closing speed * 0.05 s + DYTG_FIRE_D. The area fit remains
+ * diagnostic only.
  *
  * @boolean
  * @group DYT Guidance
@@ -800,8 +803,9 @@ PARAM_DEFINE_INT32(DYTG_FIRE_EN, 1);
 /**
  * Enable laser/image range fusion
  *
- * Uses fresh gated SDM50 distance and closing speed to calibrate the continuous
- * image estimate. Set to zero to retain the original image-only trigger.
+ * Uses fresh gated SDM50 distance to update a multiplicative image-distance
+ * correction and uses closing speed to calibrate the continuous image speed
+ * estimate. Set to zero to retain the original image-only trigger.
  *
  * @boolean
  * @group DYT Guidance
@@ -811,9 +815,9 @@ PARAM_DEFINE_INT32(DYTG_FUS_EN, 1);
 /**
  * Net release base trigger distance
  *
- * Base distance added to the fused closing-speed lookahead. Automatic release
- * starts when fused range is no greater than fused closing_speed * 0.3 s plus
- * DYTG_FIRE_D.
+ * Base distance added to the fused closing-speed lookaheads. Attitude alignment
+ * starts at fused closing speed * 0.3 s plus DYTG_FIRE_D, and the gripper PWM is
+ * sent at fused closing speed * 0.05 s plus DYTG_FIRE_D.
  *
  * @unit m
  * @min 0.1
@@ -821,7 +825,7 @@ PARAM_DEFINE_INT32(DYTG_FUS_EN, 1);
  * @decimal 2
  * @group DYT Guidance
  */
-PARAM_DEFINE_FLOAT(DYTG_FIRE_D, 1.6f);
+PARAM_DEFINE_FLOAT(DYTG_FIRE_D, 2.0f);
 
 /**
  * Enable net release hold

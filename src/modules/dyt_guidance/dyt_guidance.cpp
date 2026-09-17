@@ -87,6 +87,7 @@ private:
 	static constexpr hrt_abstime MIDCOURSE_HOLD_INTERVAL{40_ms};
 	static constexpr hrt_abstime MIDCOURSE_OWNSHIP_INTERVAL{40_ms};
 	static constexpr hrt_abstime MIDCOURSE_GEO_TARGET_INTERVAL{100_ms};
+	static constexpr float TAKEOFF_MIDCOURSE_ALTITUDE_TOLERANCE_M{0.5f};
 	static constexpr int SEARCH_CENTER_PASSES{2};
 	static constexpr hrt_abstime AUTO_RECOGNITION_HOLD{400_ms};
 	static constexpr hrt_abstime AUTO_LOCK_CONFIRM_HOLD{400_ms};
@@ -99,23 +100,27 @@ private:
 	static constexpr float IMAGE_LONG_DISTANCE_SCALE{1.2075f};
 	static constexpr float IMAGE_LONG_DISTANCE_OFFSET{0.6356f};
 	static constexpr float IMAGE_DISTANCE_MIN_M{1.f};
-	static constexpr float IMAGE_DISTANCE_MAX_M{12.f};
+	static constexpr float IMAGE_DISTANCE_MAX_M{50.f};
 	static constexpr float IMAGE_ZOOM_TOLERANCE{0.05f};
-	static constexpr float IMAGE_CLOSING_SPEED_MAX_M_S{30.f};
-	static constexpr float NET_CAPTURE_DISTANCE_DEFAULT_M{1.6f};
-	static constexpr float NET_CAPTURE_LOOKAHEAD_S{0.3f};
+	static constexpr float IMAGE_CLOSING_SPEED_MAX_M_S{75.f};
+	static constexpr float NET_CAPTURE_DISTANCE_DEFAULT_M{2.f};
+	static constexpr float NET_CAPTURE_ATTITUDE_LOOKAHEAD_S{0.3f};
+	static constexpr float NET_CAPTURE_FIRE_LOOKAHEAD_S{0.05f};
 	static constexpr int IMAGE_SPEED_HISTORY_LEN{64};
 	static constexpr int IMAGE_SPEED_MIN_SAMPLES{5};
 	static constexpr hrt_abstime IMAGE_SPEED_WINDOW{600_ms};
 	static constexpr hrt_abstime IMAGE_SPEED_MIN_SPAN{450_ms};
 	static constexpr hrt_abstime IMAGE_SPEED_MAX_GAP{600_ms};
 	static constexpr hrt_abstime IMAGE_SPEED_MAX_AGE{500_ms};
-	static constexpr hrt_abstime FUSION_LASER_MAX_AGE{200_ms};
-	static constexpr float FUSION_BIAS_ALPHA{0.15f};
-	static constexpr float FUSION_INITIAL_DISTANCE_GATE_M{3.f};
+	static constexpr hrt_abstime FUSION_LASER_MAX_AGE{50_ms};
+	static constexpr float FUSION_CORRECTION_ALPHA{0.15f};
+	static constexpr float FUSION_DISTANCE_SCALE_MIN{0.5f};
+	static constexpr float FUSION_DISTANCE_SCALE_MAX{1.5f};
 	static constexpr float FUSION_TRACK_DISTANCE_GATE_M{1.5f};
 	static constexpr float FUSION_SPEED_GATE_M_S{5.f};
-	static constexpr hrt_abstime NET_RELEASE_PWM_DELAY{250_ms};
+	static constexpr hrt_abstime MANUAL_NET_RELEASE_PWM_DELAY{250_ms};
+	static constexpr int32_t NET_RELEASE_ATTITUDE_MAX_MS{500};
+	static constexpr hrt_abstime NET_RELEASE_POST_PWM_ATTITUDE_TIME{50_ms};
 
 	struct ScanArea {
 		float yaw_min_deg{0.f};
@@ -172,11 +177,15 @@ private:
 	void update_vehicle_id();
 	void update_params_if_needed();
 	void update_control_mode();
+	void handle_takeoff_midcourse_command();
+	void update_takeoff_midcourse_request();
+	void reset_takeoff_midcourse_request();
 	void update_midcourse_mode_exit();
 	void handle_dyt_command_events();
 	void handle_ground_guidance_commands(hrt_abstime now);
 	void update_ground_command_result(hrt_abstime now);
 	bool cooperative_status_fresh() const;
+	bool terminal_entry_from_midcourse() const;
 	uint8_t effective_vehicle_type() const;
 	uint8_t actual_guidance_phase() const;
 
@@ -362,6 +371,11 @@ private:
 	bool _midcourse_operator_exit_blocked{false};
 	bool _midcourse_offboard_seen{false};
 	bool _previous_gcs_midcourse_request{false};
+	bool _previous_auto_midcourse_request{false};
+	bool _auto_midcourse_requested{false};
+	bool _takeoff_midcourse_triggered{false};
+	bool _takeoff_midcourse_was_armed{false};
+	bool _takeoff_altitude_conversion_logged{false};
 	bool _midcourse_switch_latched{false};
 	bool _previous_midcourse_switch_active{false};
 	bool _semi_target_selected{false};
@@ -373,13 +387,15 @@ private:
 	bool _net_release_sent{false};
 	bool _net_capture_complete{false};
 	bool _net_release_pitch_pending{false};
+	bool _net_release_manual_sequence{false};
+	bool _net_release_auto_timeout_blocked{false};
 	bool _net_hold_pending{false};
 	bool _image_range_valid{false};
 	bool _image_closing_speed_valid{false};
 	bool _fused_range_valid{false};
 	bool _fused_closing_speed_valid{false};
 	bool _laser_fusion_used{false};
-	bool _fusion_distance_bias_valid{false};
+	bool _fusion_distance_scale_valid{false};
 	bool _fusion_speed_bias_valid{false};
 	uint8_t _fusion_initial_laser_count{0};
 	uint8_t _image_video_source{UINT8_MAX};
@@ -396,6 +412,8 @@ private:
 	uint8_t _ground_command_result{dyt_guidance_status_s::COMMAND_RESULT_NONE};
 	hrt_abstime _ground_command_received_time{0};
 	bool _have_ground_command{false};
+	float _takeoff_target_alt_amsl_m{NAN};
+	float _takeoff_target_height_rel_m{NAN};
 	float _scan_yaw_deg{0.f};
 	float _scan_pitch_deg{0.f};
 	float _laser_distance_m{NAN};
@@ -407,9 +425,9 @@ private:
 	float _image_trigger_distance_m{NAN};
 	float _fused_distance_m{NAN};
 	float _fused_closing_speed_m_s{NAN};
-	float _fusion_distance_bias_m{NAN};
+	float _fusion_distance_scale{NAN};
 	float _fusion_speed_bias_m_s{NAN};
-	float _fusion_initial_distance_bias_m{NAN};
+	float _fusion_initial_distance_scale{NAN};
 	float _fusion_laser_distance_m{NAN};
 	float _fusion_laser_closing_speed_m_s{NAN};
 	ImageRangeSample _image_speed_history[IMAGE_SPEED_HISTORY_LEN]{};
@@ -533,6 +551,7 @@ private:
 	uORB::Subscription _vehicle_local_position_sub{ORB_ID(vehicle_local_position)};
 	uORB::Subscription _vehicle_local_position_setpoint_sub{ORB_ID(vehicle_local_position_setpoint)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
+	uORB::Subscription _vehicle_command_sub{ORB_ID(vehicle_command)};
 	uORB::Subscription _vehicle_angular_velocity_sub{ORB_ID(vehicle_angular_velocity)};
 	uORB::Subscription _airspeed_validated_sub{ORB_ID(airspeed_validated)};
 	uORB::Subscription _manual_control_sub{ORB_ID(manual_control_setpoint)};
@@ -778,12 +797,12 @@ void DytGuidance::show_status()
 		 _net_release_pitch_until > hrt_absolute_time(),
 		 _net_release_pitch_pending,
 		 _net_release_sent);
-	PX4_INFO("net fusion: laser=(%.2f m, %.2f m/s) fused=(%.2f m, %.2f m/s) bias=(%.2f m, %.2f m/s) used=%d valid=%d",
+	PX4_INFO("net fusion: laser=(%.2f m, %.2f m/s) fused=(%.2f m, %.2f m/s) correction=(%.3f, %.2f m/s) used=%d valid=%d",
 		 static_cast<double>(_fusion_laser_distance_m),
 		 static_cast<double>(_fusion_laser_closing_speed_m_s),
 		 static_cast<double>(_fused_distance_m),
 		 static_cast<double>(_fused_closing_speed_m_s),
-		 static_cast<double>(_fusion_distance_bias_m),
+		 static_cast<double>(_fusion_distance_scale),
 		 static_cast<double>(_fusion_speed_bias_m_s),
 		 _laser_fusion_used, _fused_range_valid && _fused_closing_speed_valid);
 	PX4_INFO("manual fire: aux=%ld value=%.2f btn=%ld request=%d",
@@ -920,6 +939,7 @@ void DytGuidance::update_control_mode()
 
 	_last_control_mode = mode;
 	_gcs_phase_request = 0;
+	_auto_midcourse_requested = false;
 	_midcourse_switch_latched = false;
 	_semi_target_selected = false;
 	_semi_guidance_confirmed = false;
@@ -931,15 +951,142 @@ void DytGuidance::update_control_mode()
 	}
 }
 
+void DytGuidance::handle_takeoff_midcourse_command()
+{
+	vehicle_command_s command{};
+
+	for (int update = 0; update < vehicle_command_s::ORB_QUEUE_LENGTH; ++update) {
+		if (!_vehicle_command_sub.update(&command)) {
+			break;
+		}
+
+		const hrt_abstime now = hrt_absolute_time();
+		const bool command_fresh = command.timestamp != 0 && command.timestamp <= now
+					   && now - command.timestamp < 1_s;
+		const bool target_system_ok = command.target_system == 0
+					      || command.target_system == _vehicle_status.system_id;
+		const bool target_component_ok = command.target_component == 0
+						 || command.target_component == _vehicle_status.component_id;
+
+		// Only the external takeoff command received before the initial liftoff may
+		// arm this one-shot transition. Later takeoff commands, including any sent
+		// after a net capture, must not restart midcourse automatically.
+		if (command.command != vehicle_command_s::VEHICLE_CMD_NAV_TAKEOFF || !command.from_external || !command_fresh
+		    || !target_system_ok || !target_component_ok || _vehicle_status.takeoff_time != 0
+		    || _takeoff_midcourse_triggered || _net_capture_complete || !PX4_ISFINITE(command.param7)) {
+			continue;
+		}
+
+		const bool altitude_changed = !PX4_ISFINITE(_takeoff_target_alt_amsl_m)
+					      || fabsf(command.param7 - _takeoff_target_alt_amsl_m) > 0.01f;
+		if (altitude_changed) {
+			_takeoff_target_alt_amsl_m = command.param7;
+			_takeoff_target_height_rel_m = NAN;
+			_takeoff_altitude_conversion_logged = false;
+			PX4_INFO("takeoff midcourse altitude received: AMSL %.1f m", (double)command.param7);
+		}
+	}
+}
+
+void DytGuidance::reset_takeoff_midcourse_request()
+{
+	_auto_midcourse_requested = false;
+	_previous_auto_midcourse_request = false;
+	_takeoff_midcourse_triggered = false;
+	_takeoff_altitude_conversion_logged = false;
+	_takeoff_target_alt_amsl_m = NAN;
+	_takeoff_target_height_rel_m = NAN;
+}
+
+void DytGuidance::update_takeoff_midcourse_request()
+{
+	const bool armed = _vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED;
+
+	// Reset only on an armed -> disarmed transition. This preserves a takeoff
+	// command sent while disarmed immediately before the first arming.
+	if (_takeoff_midcourse_was_armed && !armed) {
+		reset_takeoff_midcourse_request();
+	}
+
+	_takeoff_midcourse_was_armed = armed;
+
+	if (!armed) {
+		_auto_midcourse_requested = false;
+		return;
+	}
+
+	if (_net_capture_complete) {
+		_auto_midcourse_requested = false;
+		_takeoff_midcourse_triggered = true;
+		return;
+	}
+
+	if (_takeoff_midcourse_triggered || !PX4_ISFINITE(_takeoff_target_alt_amsl_m)
+	    || !_home_position.valid_alt || !_home_position.valid_lpos
+	    || !PX4_ISFINITE(_home_position.alt) || !PX4_ISFINITE(_home_position.z)) {
+		return;
+	}
+
+	_takeoff_target_height_rel_m = _takeoff_target_alt_amsl_m - _home_position.alt;
+
+	if (!_takeoff_altitude_conversion_logged) {
+		_takeoff_altitude_conversion_logged = true;
+		PX4_INFO("takeoff midcourse altitude: AMSL %.1f, home %.1f, relative %.1f m",
+			 (double)_takeoff_target_alt_amsl_m, (double)_home_position.alt,
+			 (double)_takeoff_target_height_rel_m);
+	}
+
+	const hrt_abstime now = hrt_absolute_time();
+	const bool local_height_fresh = _vehicle_local_position.timestamp != 0
+					&& _vehicle_local_position.timestamp <= now
+					&& now - _vehicle_local_position.timestamp < 1_s;
+
+	if (!vehicle_status_fresh() || _vehicle_status.failsafe || _vehicle_status.takeoff_time == 0
+	    || _param_coop_enable.get() <= 0 || !_vehicle_local_position.z_valid
+	    || !local_height_fresh || !PX4_ISFINITE(_vehicle_local_position.z)
+	    || !PX4_ISFINITE(_takeoff_target_height_rel_m)
+	    || _takeoff_target_height_rel_m <= TAKEOFF_MIDCOURSE_ALTITUDE_TOLERANCE_M) {
+		return;
+	}
+
+	const float height_above_takeoff_m = _home_position.z - _vehicle_local_position.z;
+
+	if (!PX4_ISFINITE(height_above_takeoff_m)
+	    || height_above_takeoff_m + TAKEOFF_MIDCOURSE_ALTITUDE_TOLERANCE_M
+	       < _takeoff_target_height_rel_m) {
+		return;
+	}
+
+	// Consume the height trigger before publishing the request. From this point
+	// onward no mode change, tracking loss, or net-capture hold can re-arm it in
+	// the same flight. A new explicit GCS/RC request is required after an exit.
+	_takeoff_midcourse_triggered = true;
+
+	if (_vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+	    || _vehicle_status.nav_state_user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_LAND) {
+		PX4_WARN("takeoff height trigger ignored in RTL/Land; explicit midcourse request required");
+		return;
+	}
+
+	_auto_midcourse_requested = true;
+	_midcourse_operator_exit_blocked = false;
+	_midcourse_offboard_seen = false;
+	PX4_INFO("takeoff height reached (%.1f/%.1f m): requesting midcourse once",
+		 (double)height_above_takeoff_m, (double)_takeoff_target_height_rel_m);
+}
+
 void DytGuidance::update_midcourse_mode_exit()
 {
 	const bool gcs_midcourse_requested = _gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE;
+	const bool auto_midcourse_requested = _auto_midcourse_requested;
 	const bool switch_requested = midcourse_switch_requested();
 
 	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
 		_midcourse_operator_exit_blocked = false;
 		_midcourse_offboard_seen = false;
 		_previous_gcs_midcourse_request = false;
+		_previous_auto_midcourse_request = false;
+		_auto_midcourse_requested = false;
 		_midcourse_switch_latched = false;
 		return;
 	}
@@ -948,11 +1095,15 @@ void DytGuidance::update_midcourse_mode_exit()
 		_midcourse_operator_exit_blocked = false;
 	}
 
-	if (!gcs_midcourse_requested && !switch_requested) {
+	if (auto_midcourse_requested && !_previous_auto_midcourse_request) {
 		_midcourse_operator_exit_blocked = false;
 	}
 
-	const bool midcourse_requested = gcs_midcourse_requested || switch_requested;
+	if (!gcs_midcourse_requested && !auto_midcourse_requested && !switch_requested) {
+		_midcourse_operator_exit_blocked = false;
+	}
+
+	const bool midcourse_requested = gcs_midcourse_requested || auto_midcourse_requested || switch_requested;
 	const bool terminal_inactive = _state == TaskState::Idle || _state == TaskState::Abort;
 
 	if (!_midcourse_operator_exit_blocked && midcourse_requested && terminal_inactive && offboard_control_active()) {
@@ -963,6 +1114,7 @@ void DytGuidance::update_midcourse_mode_exit()
 	    && _vehicle_status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD) {
 		_midcourse_operator_exit_blocked = true;
 		_midcourse_offboard_seen = false;
+		_auto_midcourse_requested = false;
 		_midcourse_switch_latched = false;
 		if (gcs_midcourse_requested) {
 			_gcs_phase_request = 0;
@@ -972,6 +1124,7 @@ void DytGuidance::update_midcourse_mode_exit()
 	}
 
 	_previous_gcs_midcourse_request = _gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE;
+	_previous_auto_midcourse_request = _auto_midcourse_requested;
 }
 
 void DytGuidance::handle_dyt_command_events()
@@ -1010,6 +1163,7 @@ void DytGuidance::update_subscriptions()
 	_vehicle_local_position_sub.update(&_vehicle_local_position);
 	_vehicle_local_position_setpoint_sub.update(&_vehicle_local_position_setpoint);
 	_vehicle_status_sub.update(&_vehicle_status);
+	handle_takeoff_midcourse_command();
 	_vehicle_angular_velocity_sub.update(&_vehicle_angular_velocity);
 	_airspeed_validated_sub.update(&_airspeed_validated);
 	_manual_control_sub.update(&_manual_control);
@@ -1098,7 +1252,8 @@ void DytGuidance::handle_ground_guidance_commands(hrt_abstime now)
 			&& local_position_global_valid() && _param_coop_enable.get() > 0;
 		const bool phase_preconditions_ok = command.phase == dyt_guidance_command_s::PHASE_MIDCOURSE ?
 						  midcourse_preconditions_ok :
-						  (preconditions_ok() && (!semi_terminal_request || semi_lock_ready));
+						  (preconditions_ok() && terminal_entry_from_midcourse()
+						   && (!semi_terminal_request || semi_lock_ready));
 
 		if (valid_phase && phase_preconditions_ok) {
 			_gcs_phase_request = command.phase;
@@ -1124,6 +1279,15 @@ bool DytGuidance::cooperative_status_fresh() const
 {
 	return _cooperative_status.timestamp != 0 &&
 	       hrt_elapsed_time(&_cooperative_status.timestamp) < 300_ms;
+}
+
+bool DytGuidance::terminal_entry_from_midcourse() const
+{
+	// Terminal guidance may only take over directly from a confirmed, active
+	// midcourse controller. A stale status left over after a flight-mode change,
+	// or a target seen immediately after arming, must never authorize takeover.
+	return cooperative_status_fresh() && _cooperative_status.active
+	       && _cooperative_status.target_valid && offboard_control_active();
 }
 
 uint8_t DytGuidance::effective_vehicle_type() const
@@ -1319,6 +1483,10 @@ bool DytGuidance::midcourse_pointing_requested() const
 
 	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_TERMINAL) {
 		return false;
+	}
+
+	if (_auto_midcourse_requested) {
+		return true;
 	}
 
 	return midcourse_switch_requested();
@@ -2028,28 +2196,60 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 	const bool manual_fire_request = manual_fire_requested();
 	const bool manual_fire_rising = manual_fire_request && !_prev_manual_fire_request;
 	_prev_manual_fire_request = manual_fire_request;
+	const int32_t pitch_duration_ms = math::constrain(_param_net_release_pitch_ms.get(), int32_t{0},
+					  NET_RELEASE_ATTITUDE_MAX_MS);
+	const float configured_distance_m = _param_net_capture_distance.get();
+	const float capture_distance_m = PX4_ISFINITE(configured_distance_m)
+					 ? math::constrain(configured_distance_m, 0.1f, 12.f)
+					 : NET_CAPTURE_DISTANCE_DEFAULT_M;
+	auto finish_pitch_action = [this]() {
+		_net_release_pitch_until = 0;
+		_net_release_fire_at = 0;
+		_net_release_pitch_pending = false;
+		_net_release_manual_sequence = false;
+
+		if (_net_release_sent) {
+			_net_hold_pending = false;
+			start_net_hold_after_release();
+		}
+	};
 
 	if (_net_release_pitch_until != 0) {
+		// Automatic release must not issue PWM after the configured attitude window.
+		// Manual release keeps its existing behavior of firing at the end of a
+		// shorter configured window.
+		if (now >= _net_release_pitch_until && !_net_release_manual_sequence) {
+			_net_release_auto_timeout_blocked = true;
+			finish_pitch_action();
+			return;
+		}
+
 		if (!target_usable() && !_net_release_sent) {
 			clear_net_release_trigger();
 			return;
 		}
 
-		if (_net_release_pitch_pending && now >= _net_release_fire_at && !_net_release_sent) {
+		bool fire_now = _net_release_manual_sequence && now >= _net_release_fire_at;
+
+		if (!_net_release_manual_sequence && !_net_release_sent) {
+			const bool fusion_ready = update_image_net_estimate(now);
+			const float fire_distance_m = capture_distance_m
+						      + NET_CAPTURE_FIRE_LOOKAHEAD_S * _fused_closing_speed_m_s;
+			fire_now = fusion_ready && PX4_ISFINITE(fire_distance_m)
+				   && _fused_distance_m < fire_distance_m;
+		}
+
+		if (_net_release_pitch_pending && fire_now && !_net_release_sent) {
 			send_net_release_command(now);
 			_net_release_sent = true;
 			_net_release_pitch_pending = false;
+			_net_release_manual_sequence = false;
+			_net_release_pitch_until = math::min(_net_release_pitch_until,
+							      now + NET_RELEASE_POST_PWM_ATTITUDE_TIME);
 		}
 
 		if (now >= _net_release_pitch_until) {
-			_net_release_pitch_until = 0;
-			_net_release_fire_at = 0;
-			_net_release_pitch_pending = false;
-
-			if (_net_release_sent) {
-				_net_hold_pending = false;
-				start_net_hold_after_release();
-			}
+			finish_pitch_action();
 		}
 
 		return;
@@ -2064,12 +2264,13 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 		return;
 	}
 
-	const int32_t pitch_duration_ms = math::constrain(_param_net_release_pitch_ms.get(), int32_t{0}, int32_t{2000});
-	auto start_pitch_then_release = [this, now, pitch_duration_ms]() {
+	auto start_pitch_action = [this, now, pitch_duration_ms](bool manual_sequence) {
 		if (pitch_duration_ms > 0) {
 			_net_release_pitch_until = now + static_cast<hrt_abstime>(pitch_duration_ms) * 1000ULL;
-			_net_release_fire_at = math::min(now + NET_RELEASE_PWM_DELAY, _net_release_pitch_until);
+			_net_release_fire_at = manual_sequence ?
+						math::min(now + MANUAL_NET_RELEASE_PWM_DELAY, _net_release_pitch_until) : 0;
 			_net_release_pitch_pending = true;
+			_net_release_manual_sequence = manual_sequence;
 			_net_hold_pending = false;
 
 		} else {
@@ -2079,7 +2280,7 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 	};
 
 	if (manual_fire_rising) {
-		start_pitch_then_release();
+		start_pitch_action(true);
 		return;
 	}
 
@@ -2091,8 +2292,25 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 		return;
 	}
 
-	if (_fused_distance_m <= _image_trigger_distance_m) {
-		start_pitch_then_release();
+	const float fire_distance_m = capture_distance_m
+				      + NET_CAPTURE_FIRE_LOOKAHEAD_S * _fused_closing_speed_m_s;
+	const bool attitude_triggered = _fused_distance_m < _image_trigger_distance_m;
+
+	// A timed-out automatic attempt must not restart every control cycle during
+	// the same approach. Re-arm only after the target moves back outside the
+	// attitude trigger boundary; manual release remains available.
+	if (!attitude_triggered) {
+		_net_release_auto_timeout_blocked = false;
+	}
+
+	if (pitch_duration_ms == 0) {
+		if (PX4_ISFINITE(fire_distance_m) && _fused_distance_m < fire_distance_m) {
+			send_net_release_command(now);
+			_net_release_sent = true;
+		}
+
+	} else if (attitude_triggered && !_net_release_auto_timeout_blocked) {
+		start_pitch_action(false);
 	}
 }
 
@@ -2212,7 +2430,9 @@ bool DytGuidance::update_image_net_estimate(hrt_abstime now)
 	}
 
 	if (_last_target.timestamp_sample == _image_last_sample_time) {
-		return _fused_range_valid && _fused_closing_speed_valid;
+		// Re-run fusion for the current image sample so laser age compensation
+		// advances every module cycle without duplicating the image-speed sample.
+		return update_fused_net_estimate(now);
 	}
 
 	_image_last_sample_time = _last_target.timestamp_sample;
@@ -2323,44 +2543,59 @@ bool DytGuidance::update_fused_net_estimate(hrt_abstime now)
 				 && _sdm50_status.valid && _sdm50_status.timestamp_sample != 0
 				 && _sdm50_status.timestamp_sample <= now
 				 && now - _sdm50_status.timestamp_sample <= FUSION_LASER_MAX_AGE;
-	const bool laser_distance_valid = laser_fresh && PX4_ISFINITE(_sdm50_status.distance_m)
-					  && _sdm50_status.distance_m >= 0.05f && _sdm50_status.distance_m <= 50.f;
-	const bool new_laser_sample = laser_distance_valid
+	const bool laser_measurement_valid = laser_fresh && PX4_ISFINITE(_sdm50_status.distance_m)
+					    && _sdm50_status.distance_m >= 0.05f && _sdm50_status.distance_m <= 50.f;
+	const bool new_laser_sample = laser_measurement_valid
 				      && _sdm50_status.timestamp_sample != _last_fusion_laser_sample_time;
+	const bool laser_prediction_speed_valid = PX4_ISFINITE(_sdm50_status.closing_speed_m_s)
+						 && _sdm50_status.closing_speed_m_s >= 0.f
+						 && _sdm50_status.closing_speed_m_s <= IMAGE_CLOSING_SPEED_MAX_M_S;
+	float laser_distance_for_fusion_m = _sdm50_status.distance_m;
+
+	if (laser_measurement_valid && laser_prediction_speed_valid) {
+		const float laser_age_s = static_cast<float>(now - _sdm50_status.timestamp_sample) * 1e-6f;
+		laser_distance_for_fusion_m -= _sdm50_status.closing_speed_m_s * laser_age_s;
+	}
+
+	const bool laser_distance_valid = laser_measurement_valid && PX4_ISFINITE(laser_distance_for_fusion_m)
+					  && laser_distance_for_fusion_m >= 0.05f && laser_distance_for_fusion_m <= 50.f;
 
 	if (laser_distance_valid) {
-		_fusion_laser_distance_m = _sdm50_status.distance_m;
-		const float raw_bias_m = _image_distance_long_m - _fusion_laser_distance_m;
+		_fusion_laser_distance_m = laser_distance_for_fusion_m;
+		// Calibration state is updated only by the measured distance. The
+		// age-compensated value is used for fusion and trigger decisions only.
+		const float raw_scale = _sdm50_status.distance_m / _image_distance_long_m;
+		const bool raw_scale_valid = PX4_ISFINITE(raw_scale)
+					     && raw_scale >= FUSION_DISTANCE_SCALE_MIN
+					     && raw_scale <= FUSION_DISTANCE_SCALE_MAX;
 
-		if (!_fusion_distance_bias_valid && new_laser_sample && PX4_ISFINITE(raw_bias_m)
-		    && fabsf(raw_bias_m) <= FUSION_INITIAL_DISTANCE_GATE_M) {
-			if (_fusion_initial_laser_count == 0
-			    || fabsf(raw_bias_m - _fusion_initial_distance_bias_m) > FUSION_TRACK_DISTANCE_GATE_M) {
-				_fusion_initial_distance_bias_m = raw_bias_m;
+		if (!_fusion_distance_scale_valid && new_laser_sample && raw_scale_valid) {
+			if (_fusion_initial_laser_count == 0) {
+				_fusion_initial_distance_scale = raw_scale;
 				_fusion_initial_laser_count = 1;
 
 			} else {
-				_fusion_initial_distance_bias_m = 0.5f * (_fusion_initial_distance_bias_m + raw_bias_m);
+				_fusion_initial_distance_scale = 0.5f * (_fusion_initial_distance_scale + raw_scale);
 				++_fusion_initial_laser_count;
 
 				if (_fusion_initial_laser_count >= 2) {
-					_fusion_distance_bias_m = _fusion_initial_distance_bias_m;
-					_fusion_distance_bias_valid = true;
+					_fusion_distance_scale = _fusion_initial_distance_scale;
+					_fusion_distance_scale_valid = true;
 				}
 			}
 
-		} else if (!_fusion_distance_bias_valid && new_laser_sample) {
+		} else if (!_fusion_distance_scale_valid && new_laser_sample) {
 			_fusion_initial_laser_count = 0;
-			_fusion_initial_distance_bias_m = NAN;
+			_fusion_initial_distance_scale = NAN;
 		}
 
-		const float corrected_image_m = _fusion_distance_bias_valid ?
-						_image_distance_long_m - _fusion_distance_bias_m : _image_distance_long_m;
+		const float corrected_image_m = _fusion_distance_scale_valid ?
+						_image_distance_long_m * _fusion_distance_scale : _image_distance_long_m;
 
-		if (_fusion_distance_bias_valid
+		if (_fusion_distance_scale_valid
 		    && fabsf(corrected_image_m - _fusion_laser_distance_m) <= FUSION_TRACK_DISTANCE_GATE_M) {
-			if (new_laser_sample) {
-				_fusion_distance_bias_m += FUSION_BIAS_ALPHA * (raw_bias_m - _fusion_distance_bias_m);
+			if (new_laser_sample && raw_scale_valid) {
+				_fusion_distance_scale += FUSION_CORRECTION_ALPHA * (raw_scale - _fusion_distance_scale);
 			}
 
 			_fused_distance_m = _fusion_laser_distance_m;
@@ -2369,8 +2604,8 @@ bool DytGuidance::update_fused_net_estimate(hrt_abstime now)
 	}
 
 	if (!_laser_fusion_used) {
-		_fused_distance_m = _fusion_distance_bias_valid ?
-				    _image_distance_long_m - _fusion_distance_bias_m : _image_distance_long_m;
+		_fused_distance_m = _fusion_distance_scale_valid ?
+				    _image_distance_long_m * _fusion_distance_scale : _image_distance_long_m;
 	}
 
 	const bool laser_speed_valid = _laser_fusion_used && PX4_ISFINITE(_sdm50_status.closing_speed_m_s)
@@ -2387,9 +2622,9 @@ bool DytGuidance::update_fused_net_estimate(hrt_abstime now)
 		if (PX4_ISFINITE(raw_speed_bias_m_s)
 		    && fabsf(corrected_image_speed_m_s - _fusion_laser_closing_speed_m_s) <= FUSION_SPEED_GATE_M_S) {
 			if (new_laser_sample && _fusion_speed_bias_valid) {
-				_fusion_speed_bias_m_s += FUSION_BIAS_ALPHA * (raw_speed_bias_m_s - _fusion_speed_bias_m_s);
+				_fusion_speed_bias_m_s += FUSION_CORRECTION_ALPHA * (raw_speed_bias_m_s - _fusion_speed_bias_m_s);
 
-			} else if (!_fusion_speed_bias_valid) {
+			} else if (new_laser_sample && !_fusion_speed_bias_valid) {
 				_fusion_speed_bias_m_s = raw_speed_bias_m_s;
 				_fusion_speed_bias_valid = true;
 			}
@@ -2418,7 +2653,7 @@ bool DytGuidance::update_fused_net_estimate(hrt_abstime now)
 		const float capture_distance_m = PX4_ISFINITE(configured_distance_m)
 					 ? math::constrain(configured_distance_m, 0.1f, 12.f)
 					 : NET_CAPTURE_DISTANCE_DEFAULT_M;
-		_image_trigger_distance_m = _fused_closing_speed_m_s * NET_CAPTURE_LOOKAHEAD_S + capture_distance_m;
+		_image_trigger_distance_m = _fused_closing_speed_m_s * NET_CAPTURE_ATTITUDE_LOOKAHEAD_S + capture_distance_m;
 
 	} else {
 		_image_trigger_distance_m = NAN;
@@ -2449,15 +2684,15 @@ void DytGuidance::reset_range_fusion()
 	_fused_range_valid = false;
 	_fused_closing_speed_valid = false;
 	_laser_fusion_used = false;
-	_fusion_distance_bias_valid = false;
+	_fusion_distance_scale_valid = false;
 	_fusion_speed_bias_valid = false;
 	_fusion_initial_laser_count = 0;
 	_last_fusion_laser_sample_time = 0;
 	_fused_distance_m = NAN;
 	_fused_closing_speed_m_s = NAN;
-	_fusion_distance_bias_m = NAN;
+	_fusion_distance_scale = NAN;
 	_fusion_speed_bias_m_s = NAN;
-	_fusion_initial_distance_bias_m = NAN;
+	_fusion_initial_distance_scale = NAN;
 	_fusion_laser_distance_m = NAN;
 	_fusion_laser_closing_speed_m_s = NAN;
 }
@@ -2598,6 +2833,19 @@ bool DytGuidance::update_laser_distance(hrt_abstime now)
 
 void DytGuidance::send_net_release_command(hrt_abstime now)
 {
+	// Net release permanently consumes the initial-takeoff trigger for this
+	// flight. Do this before publishing the gripper command so the following
+	// braking interval cannot be interrupted by a height-triggered takeover.
+	_auto_midcourse_requested = false;
+	_takeoff_midcourse_triggered = true;
+
+	// A release ends the current guidance request. Discard every request that
+	// existed before the release so neither a latched RC switch nor an earlier
+	// GCS command can hand control straight back to cooperative rendezvous. A
+	// new switch edge or GCS command is required after the capture hold.
+	_gcs_phase_request = 0;
+	_midcourse_switch_latched = false;
+
 	vehicle_command_s cmd{};
 	cmd.timestamp = now;
 	cmd.command = vehicle_command_s::VEHICLE_CMD_DO_GRIPPER;
@@ -2620,6 +2868,8 @@ void DytGuidance::clear_net_release_trigger()
 	_net_release_pitch_until = 0;
 	_net_release_fire_at = 0;
 	_net_release_pitch_pending = false;
+	_net_release_manual_sequence = false;
+	_net_release_auto_timeout_blocked = false;
 	reset_image_net_estimate();
 }
 
@@ -2631,6 +2881,13 @@ void DytGuidance::update_gripper_release_trigger(hrt_abstime now)
 		if (gripper.command != gripper_s::COMMAND_RELEASE) {
 			continue;
 		}
+
+		// Also cover a release reported by the gripper path rather than initiated
+		// locally. Subsequent guidance must be explicitly requested by GCS/RC.
+		_auto_midcourse_requested = false;
+		_takeoff_midcourse_triggered = true;
+		_gcs_phase_request = 0;
+		_midcourse_switch_latched = false;
 
 		const int32_t duration_ms = math::constrain(_param_net_decel_ms.get(), int32_t{0}, int32_t{5000});
 		const bool enabled = _param_net_decel_enable.get() > 0 && duration_ms > 0
@@ -2706,6 +2963,8 @@ void DytGuidance::publish_net_brake_setpoint()
 		_payload_lost_hold = false;
 		_payload_lost_enter_time = 0;
 		_gcs_phase_request = 0;
+		_auto_midcourse_requested = false;
+		_takeoff_midcourse_triggered = true;
 		_midcourse_switch_latched = false;
 		enter_state(TaskState::Idle, dyt_guidance_status_s::LOST_REASON_NONE);
 		_net_capture_complete = true;
@@ -2754,9 +3013,8 @@ void DytGuidance::start_net_decel_if_ready(hrt_abstime now, const Vector3f &vehi
 		return;
 	}
 
-	// The release command is sent at 250 ms, but the requested LOS alignment owns
-	// the complete attitude-action window. Start the original deceleration path
-	// only after that window has ended (300 ms with the default configuration).
+	// The LOS alignment owns the attitude-action window. Automatic release ends
+	// it at the configured timeout or 50 ms after the PWM command, whichever is earlier.
 	if (_net_release_pitch_until != 0 && now < _net_release_pitch_until) {
 		return;
 	}
@@ -3127,7 +3385,9 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 	const hrt_abstime now = hrt_absolute_time();
 	const bool net_capture_aircraft = effective_vehicle_type() == dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE;
 
-	if (net_capture_aircraft && !_net_release_sent) {
+	// Continue servicing the release timer after the gripper command has been
+	// sent so the final 50 ms attitude interval completes before braking starts.
+	if (net_capture_aircraft && (!_net_release_sent || _net_release_pitch_until != 0)) {
 		update_net_release_trigger(now);
 	}
 
@@ -3389,7 +3649,7 @@ void DytGuidance::publish_status()
 	status.command_phase = _ground_command_phase;
 	status.command_result = _ground_command_result;
 	status.net_trigger_sent = _net_release_sent;
-	status.auto_midcourse_requested = false;
+	status.auto_midcourse_requested = _auto_midcourse_requested;
 	status.midcourse_switch_requested = _midcourse_switch_latched;
 	status.midcourse_active = cooperative_status_fresh() && _cooperative_status.active;
 	status.midcourse_target_valid = cooperative_status_fresh() && _cooperative_status.target_valid;
@@ -3470,7 +3730,7 @@ void DytGuidance::publish_status()
 	status.fused_closing_speed_m_s = _fused_closing_speed_m_s;
 	status.laser_distance_m = _fusion_laser_distance_m;
 	status.laser_closing_speed_m_s = _fusion_laser_closing_speed_m_s;
-	status.image_distance_bias_m = _fusion_distance_bias_m;
+	status.image_distance_scale = _fusion_distance_scale;
 	status.image_speed_bias_m_s = _fusion_speed_bias_m_s;
 	status.los_age_s = _los_filter_initialized && _prev_los_update > 0 && now >= _prev_los_update
 			   ? (now - _prev_los_update) * 1e-6f : NAN;
@@ -3795,8 +4055,8 @@ bool DytGuidance::activate_guidance(hrt_abstime now)
 	_search_pause_until = 0;
 	_next_scan_time = 0;
 
-	if (!preconditions_ok()) {
-		PX4_WARN("DYT guidance preconditions not met");
+	if (!preconditions_ok() || !terminal_entry_from_midcourse()) {
+		PX4_WARN("DYT terminal entry denied: active midcourse required");
 		return false;
 	}
 
@@ -4521,7 +4781,8 @@ void DytGuidance::update_auto_activation(hrt_abstime now)
 {
 	const bool inactive_state = _state == TaskState::Idle || _state == TaskState::Abort;
 
-	if (_param_auto_enable.get() <= 0 || _automatic_rearm_blocked || !inactive_state || !preconditions_ok()) {
+	if (_param_auto_enable.get() <= 0 || _automatic_rearm_blocked || !inactive_state || !preconditions_ok()
+	    || !terminal_entry_from_midcourse()) {
 		_auto_lock_last_sample_time = 0;
 		_auto_recognition_start_time = 0;
 		return;
@@ -4796,11 +5057,13 @@ void DytGuidance::Run()
 	update_vehicle_id();
 	update_subscriptions();
 	update_midcourse_switch_request();
+	update_takeoff_midcourse_request();
 
 	const hrt_abstime now = hrt_absolute_time();
 
 	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
 		_gcs_phase_request = 0;
+		_auto_midcourse_requested = false;
 		_midcourse_switch_latched = false;
 		_semi_target_selected = false;
 		_semi_guidance_confirmed = false;
@@ -4823,6 +5086,7 @@ void DytGuidance::Run()
 		if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED || operator_mode_exit) {
 			clear_net_hold();
 			_gcs_phase_request = 0;
+			_auto_midcourse_requested = false;
 			_midcourse_switch_latched = false;
 			_midcourse_operator_exit_blocked = operator_mode_exit;
 			update_ground_command_result(now);
@@ -4993,7 +5257,13 @@ void DytGuidance::Run()
 		break;
 
 	case TaskState::TrackFollow:
-		if (!target_usable()) {
+		// Once the net has been released, loss of the image target must not abort
+		// and clear the pending braking hold during the remainder of the pitch
+		// action. The release timer owns the transition into braking.
+		if (_net_release_sent && (_net_release_pitch_until != 0 || _net_hold_pending)) {
+			break;
+
+		} else if (!target_usable()) {
 			handle_tracking_loss(target_locked() ? dyt_guidance_status_s::LOST_REASON_STALE :
 					     dyt_guidance_status_s::LOST_REASON_TRACKING);
 
@@ -5005,7 +5275,10 @@ void DytGuidance::Run()
 		break;
 
 	case TaskState::TrackIntercept:
-		if (!target_usable()) {
+		if (_net_release_sent && (_net_release_pitch_until != 0 || _net_hold_pending)) {
+			break;
+
+		} else if (!target_usable()) {
 			handle_tracking_loss(target_locked() ? dyt_guidance_status_s::LOST_REASON_STALE :
 					     dyt_guidance_status_s::LOST_REASON_TRACKING);
 

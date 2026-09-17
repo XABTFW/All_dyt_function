@@ -55,7 +55,7 @@ uint8 command_phase               # phase carried by the latest received GCS com
 uint8 command_result
 
 bool net_trigger_sent             # net-capture trigger command was sent in this terminal session
-bool auto_midcourse_requested     # onboard height trigger is requesting midcourse guidance
+bool auto_midcourse_requested     # one-shot initial-takeoff height trigger is requesting midcourse guidance
 bool midcourse_switch_requested   # latched one-shot request from CRDZ_ACT_AUX/CRDZ_ACT_BTN
 bool midcourse_active
 bool midcourse_target_valid
@@ -84,15 +84,16 @@ float32 image_closing_speed_m_s
 float32 image_trigger_distance_m
 
 # Laser/image complementary fusion used by the automatic net-release trigger.
-# Bias is raw image estimate minus accepted laser estimate.
+# Distance scale corrects the image estimate multiplicatively; speed bias remains
+# raw image closing speed minus accepted laser closing speed.
 bool fused_range_valid
 bool fused_closing_speed_valid
 bool laser_fusion_used
 float32 fused_distance_m
 float32 fused_closing_speed_m_s
-float32 laser_distance_m
+float32 laser_distance_m # Age-compensated laser distance used by fusion
 float32 laser_closing_speed_m_s
-float32 image_distance_bias_m
+float32 image_distance_scale
 float32 image_speed_bias_m_s
 
 float32 los_age_s
