@@ -2,6 +2,8 @@
  * DYT aircraft role
  *
  * Identifies the aircraft mission type reported to the ground station.
+ * A net-capture aircraft changes this parameter to impact aircraft after the
+ * net-capture braking sequence completes, regardless of guidance control mode.
  *
  * @value 1 Impact aircraft
  * @value 2 Net-capture aircraft
@@ -194,10 +196,10 @@ PARAM_DEFINE_FLOAT(DYTG_STK_TK, 0.30f);
 /**
  * DYT target-control mode
  *
- * Manual mode disables automatic target activation. Semi-automatic mode lets
- * the ground station select and lock a target, then waits for an explicit
- * terminal-guidance confirmation. Full automatic mode enables automatic target
- * activation after the recognition hold time.
+ * Manual mode disables automatic target activation. In semi-automatic mode,
+ * selecting a target at the ground station authorizes terminal guidance as soon
+ * as the payload reports a fresh lock. Full automatic mode enables automatic
+ * target activation after the recognition hold time.
  *
  * @value 0 Manual
  * @value 1 Semi-automatic
@@ -804,8 +806,8 @@ PARAM_DEFINE_INT32(DYTG_FIRE_EN, 1);
  * Enable laser/image range fusion
  *
  * Uses fresh gated SDM50 distance to update a multiplicative image-distance
- * correction and uses closing speed to calibrate the continuous image speed
- * estimate. Set to zero to retain the original image-only trigger.
+ * correction and uses fresh gated SDM50 closing speed to update a multiplicative
+ * image-speed correction. Set to zero to retain the original image-only trigger.
  *
  * @boolean
  * @group DYT Guidance
@@ -832,7 +834,9 @@ PARAM_DEFINE_FLOAT(DYTG_FIRE_D, 2.0f);
  *
  * When enabled, DYT guidance captures the current local position and switches
  * to position hold immediately after a gripper release command. Disable to keep
- * using the post-release low-speed tracking behavior.
+ * using the post-release low-speed tracking behavior. The automatic recovery
+ * after an unreleased 500 ms attitude timeout always performs its required
+ * brake-and-hold sequence independently of this parameter.
  *
  * @boolean
  * @group DYT Guidance

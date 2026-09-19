@@ -51,10 +51,10 @@ PARAM_DEFINE_FLOAT(CRDZ_DIST, 0.f);
 /**
  * Enable explicit horizontal offsets
  *
- * When enabled, CRDZ_FB_OFF and CRDZ_LR_OFF directly define the horizontal
- * offset in the target aircraft's moving frame. CRDZ_DIST is ignored for
- * horizontal offset generation. Keep disabled to use CRDZ_DIST as a distance
- * directly behind the target aircraft.
+ * When enabled, CRDZ_FB_OFF defines the longitudinal offset in the horizontal
+ * line-of-sight frame from the rendezvous aircraft toward the target. Lateral
+ * offset is always zero. CRDZ_DIST is ignored for horizontal offset generation.
+ * Keep disabled to use CRDZ_DIST as a distance toward the rendezvous aircraft.
  *
  * @boolean
  * @group Cooperative Rendezvous
@@ -65,11 +65,12 @@ PARAM_DEFINE_INT32(CRDZ_XY_OFF_EN, 0);
  * Target forward/back offset
  *
  * Longitudinal offset from the target aircraft used when CRDZ_XY_OFF_EN is set.
- * Positive is in front of the target and negative is behind the target.
+ * Negative values point from the target back toward the rendezvous aircraft.
+ * Positive values are constrained to zero by the controller.
  *
  * @unit m
  * @min -100
- * @max 100
+ * @max 0
  * @decimal 1
  * @group Cooperative Rendezvous
  */
@@ -78,8 +79,8 @@ PARAM_DEFINE_FLOAT(CRDZ_FB_OFF, -5.f);
 /**
  * Target left/right offset
  *
- * Lateral offset from the target aircraft used when CRDZ_XY_OFF_EN is set.
- * Positive is to the target's right and negative is to the target's left.
+ * Retained for parameter compatibility. The controller always constrains the
+ * lateral line-of-sight offset to zero.
  *
  * @unit m
  * @min -100

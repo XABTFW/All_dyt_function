@@ -55,6 +55,7 @@ set(msg_files
 	CanInterfaceStatus.msg
 	CellularStatus.msg
 	CollisionConstraints.msg
+	CommEmergencyStatus.msg
 	CooperativePosition.msg
 	CooperativeRendezvousStatus.msg
 	ControlAllocatorStatus.msg

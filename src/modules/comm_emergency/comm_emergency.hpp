@@ -12,6 +12,7 @@
 #include <uORB/SubscriptionInterval.hpp>
 #include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/comm_emergency_status.h>
 #include <uORB/topics/dyt_guidance_status.h>
 #include <uORB/topics/offboard_control_mode.h>
 #include <uORB/topics/parameter_update.h>
@@ -45,6 +46,8 @@ private:
 	uint8_t expected_nav_state(CommEmergencyStateMachine::Action action) const;
 	void reset();
 	bool resume_action_pending() const;
+	bool midcourse_recovery_ready(hrt_abstime now) const;
+	void publish_status(bool terminal_guidance_inhibited = false);
 
 	static constexpr float RESUME_DISTANCE_LIMIT_M = 2000.f;
 
@@ -76,6 +79,7 @@ private:
 	uORB::Publication<offboard_control_mode_s> _offboard_control_mode_pub{ORB_ID(offboard_control_mode)};
 	uORB::Publication<trajectory_setpoint_s> _trajectory_setpoint_pub{ORB_ID(trajectory_setpoint)};
 	uORB::Publication<vehicle_command_s> _vehicle_command_pub{ORB_ID(vehicle_command)};
+	uORB::Publication<comm_emergency_status_s> _status_pub{ORB_ID(comm_emergency_status)};
 
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::CEM_EN>) _param_enable,

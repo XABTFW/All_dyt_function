@@ -84,8 +84,7 @@ float32 image_closing_speed_m_s
 float32 image_trigger_distance_m
 
 # Laser/image complementary fusion used by the automatic net-release trigger.
-# Distance scale corrects the image estimate multiplicatively; speed bias remains
-# raw image closing speed minus accepted laser closing speed.
+# Distance and speed scales correct the image estimates multiplicatively.
 bool fused_range_valid
 bool fused_closing_speed_valid
 bool laser_fusion_used
@@ -94,7 +93,7 @@ float32 fused_closing_speed_m_s
 float32 laser_distance_m # Age-compensated laser distance used by fusion
 float32 laser_closing_speed_m_s
 float32 image_distance_scale
-float32 image_speed_bias_m_s
+float32 image_speed_scale
 
 float32 los_age_s
 float32 frame_dt_s

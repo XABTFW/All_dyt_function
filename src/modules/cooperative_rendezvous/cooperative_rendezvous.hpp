@@ -8,6 +8,7 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/SubscriptionInterval.hpp>
+#include <uORB/topics/comm_emergency_status.h>
 #include <uORB/topics/cooperative_position.h>
 #include <uORB/topics/cooperative_rendezvous_status.h>
 #include <uORB/topics/dyt_guidance_status.h>
@@ -71,6 +72,7 @@ private:
 	bool rendezvous_switch_enabled() const;
 	void update_operator_mode_exit(const vehicle_status_s &status);
 	bool dyt_status_fresh() const;
+	bool comm_midcourse_recovery_active() const;
 	bool dyt_guidance_active() const;
 	bool vehicle_status_fresh(const vehicle_status_s &status) const;
 	bool protected_navigation_state(uint8_t nav_state) const;
@@ -170,6 +172,7 @@ private:
 
 	manual_control_setpoint_s _manual_control{};
 	dyt_guidance_status_s _dyt_guidance_status{};
+	comm_emergency_status_s _comm_emergency_status{};
 	geofence_result_s _geofence_result{};
 
 	uORB::Subscription _vehicle_local_position_sub{ORB_ID(vehicle_local_position)};
@@ -177,6 +180,7 @@ private:
 	uORB::Subscription _follower_info_sub{ORB_ID(follower_info)};
 	uORB::Subscription _manual_control_sub{ORB_ID(manual_control_setpoint)};
 	uORB::Subscription _dyt_guidance_status_sub{ORB_ID(dyt_guidance_status)};
+	uORB::Subscription _comm_emergency_status_sub{ORB_ID(comm_emergency_status)};
 	uORB::Subscription _gcs_trajectory_setpoint_sub{ORB_ID(gcs_trajectory_setpoint)};
 	uORB::Subscription _geofence_result_sub{ORB_ID(geofence_result)};
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};

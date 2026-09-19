@@ -146,12 +146,21 @@ void CooperativeRendezvous::update_operator_mode_exit(const vehicle_status_s &st
 	}
 
 	const bool request_active = phase_requested || switch_requested || _gcs_midcourse_engaged;
+	const bool automatic_geofence_return = (_geofence_rtl_active || _geofence_resume_pending)
+					       && status.nav_state_user_intention
+					       == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL;
+	const bool automatic_comm_recovery = comm_midcourse_recovery_active()
+					     && (status.nav_state_user_intention
+						 == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER
+						 || status.nav_state_user_intention
+						 == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL);
 
 	if (!_midcourse_operator_exit_blocked && request_active && offboard_control_active(status)) {
 		_midcourse_offboard_seen = true;
 	}
 
-	if (_midcourse_offboard_seen && vehicle_status_fresh(status) && !status.failsafe
+	if (_midcourse_offboard_seen && vehicle_status_fresh(status) && !status.failsafe && !automatic_geofence_return
+	    && !automatic_comm_recovery
 	    && status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD) {
 		_midcourse_operator_exit_blocked = true;
 		_midcourse_offboard_seen = false;
@@ -165,6 +174,13 @@ bool CooperativeRendezvous::dyt_status_fresh() const
 {
 	return _dyt_guidance_status.timestamp != 0 &&
 	       hrt_elapsed_time(&_dyt_guidance_status.timestamp) < 500_ms;
+}
+
+bool CooperativeRendezvous::comm_midcourse_recovery_active() const
+{
+	return _comm_emergency_status.timestamp != 0
+	       && hrt_elapsed_time(&_comm_emergency_status.timestamp) < 500_ms
+	       && _comm_emergency_status.midcourse_recovery_active;
 }
 
 bool CooperativeRendezvous::dyt_guidance_active() const
@@ -390,6 +406,8 @@ bool CooperativeRendezvous::update_target_from_link()
 		reset_target_filter();
 		reset_target_history();
 		reset_arrival_hold();
+		_target_forward_xy.zero();
+		_target_direction_valid = false;
 	}
 
 	_target_info = *selected_target;
@@ -580,6 +598,8 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 	if (!_map_ref_initialized || _last_target_time == 0) {
 		reset_target_filter();
 		reset_target_history();
+		_target_forward_xy.zero();
+		_target_direction_valid = false;
 		return false;
 	}
 
@@ -589,6 +609,8 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 	if ((hrt_absolute_time() - _last_target_time) > static_cast<hrt_abstime>(timeout_s * 1_s)) {
 		reset_target_filter();
 		reset_target_history();
+		_target_forward_xy.zero();
+		_target_direction_valid = false;
 		return false;
 	}
 
@@ -599,6 +621,8 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 	if (!PX4_ISFINITE(x) || !PX4_ISFINITE(y)) {
 		reset_target_filter();
 		reset_target_history();
+		_target_forward_xy.zero();
+		_target_direction_valid = false;
 		return false;
 	}
 
@@ -637,31 +661,32 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 	apply_target_filter(raw_position, raw_velocity, target_position, target_velocity);
 
 	float forward_offset = _options.target_offset(0);
-	float right_offset = _options.target_offset(1);
 
 	if (_param_xy_offset_enable.get() > 0) {
 		const float configured_forward_offset = _param_forward_offset.get();
-		const float configured_right_offset = _param_right_offset.get();
 
 		forward_offset = PX4_ISFINITE(configured_forward_offset) ? configured_forward_offset : 0.f;
-		right_offset = PX4_ISFINITE(configured_right_offset) ? configured_right_offset : 0.f;
 
 	} else {
 		const float target_distance = _param_dist.get();
 
 		if (PX4_ISFINITE(target_distance) && target_distance >= 0.f) {
 			forward_offset = -target_distance;
-			right_offset = 0.f;
 		}
 	}
 
-	const matrix::Vector2f target_velocity_xy(target_velocity(0), target_velocity(1));
-	const float target_horizontal_speed = target_velocity_xy.norm();
+	// The LOS-relative waypoint has a stable equilibrium only behind the target with no lateral offset.
+	forward_offset = PX4_ISFINITE(forward_offset) ? math::min(forward_offset, 0.f) : 0.f;
+
+	const matrix::Vector2f target_los_xy(target_position(0) - local_pos.x, target_position(1) - local_pos.y);
+	const float target_horizontal_distance = target_los_xy.norm();
 	matrix::Vector2f target_forward{};
 	bool target_direction_valid = false;
 
-	if (PX4_ISFINITE(target_horizontal_speed) && target_horizontal_speed > 0.5f) {
-		target_forward = target_velocity_xy / target_horizontal_speed;
+	if (target_los_xy.isAllFinite() && PX4_ISFINITE(target_horizontal_distance) && target_horizontal_distance > 0.5f) {
+		// Define the horizontal offset frame from the rendezvous aircraft toward the target.
+		// Hold the last valid direction near zero horizontal separation to avoid a 180-degree axis flip.
+		target_forward = target_los_xy / target_horizontal_distance;
 		target_direction_valid = target_forward.isAllFinite();
 
 		if (target_direction_valid) {
@@ -672,21 +697,10 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 	} else if (_target_direction_valid) {
 		target_forward = _target_forward_xy;
 		target_direction_valid = true;
-
-	} else if (PX4_ISFINITE(_target_info.yaw)) {
-		const float target_yaw = static_cast<float>(_target_info.yaw);
-		target_forward = matrix::Vector2f(cosf(target_yaw), sinf(target_yaw));
-		target_direction_valid = target_forward.isAllFinite();
-
-		if (target_direction_valid) {
-			_target_forward_xy = target_forward;
-			_target_direction_valid = true;
-		}
 	}
 
 	if (target_direction_valid) {
-		const matrix::Vector2f target_right(-target_forward(1), target_forward(0));
-		const matrix::Vector2f horizontal_offset = target_forward * forward_offset + target_right * right_offset;
+		const matrix::Vector2f horizontal_offset = target_forward * forward_offset;
 		target_position(0) += horizontal_offset(0);
 		target_position(1) += horizontal_offset(1);
 	}
@@ -1113,6 +1127,21 @@ void CooperativeRendezvous::run_rendezvous(const vehicle_local_position_s &local
 	float yaw = local_pos.heading;
 
 	if (gcs_setpoint_active(local_pos, target_position, target_velocity, yaw)) {
+		const matrix::Vector2f target_los_xy(target_position(0) - local_pos.x, target_position(1) - local_pos.y);
+		const float target_horizontal_distance = target_los_xy.norm();
+
+		if (target_los_xy.isAllFinite() && PX4_ISFINITE(target_horizontal_distance) && target_horizontal_distance > 0.5f) {
+			_target_forward_xy = target_los_xy / target_horizontal_distance;
+			_target_direction_valid = _target_forward_xy.isAllFinite();
+		}
+
+		if (_target_direction_valid) {
+			yaw = atan2f(_target_forward_xy(1), _target_forward_xy(0));
+
+		} else {
+			yaw = local_pos.heading;
+		}
+
 		publish_offboard_heartbeat(true, false);
 		publish_trajectory_setpoint(target_position, target_velocity, yaw);
 		reset_velocity_slew();
@@ -1155,8 +1184,17 @@ void CooperativeRendezvous::run_rendezvous(const vehicle_local_position_s &local
 	}
 
 	matrix::Vector3f current_position(local_pos.x, local_pos.y, local_pos.z);
-	yaw = PX4_ISFINITE(_target_info.yaw) ? static_cast<float>(_target_info.yaw) : local_pos.heading;
 	const bool arrival_holding = update_arrival_hold(target_position, target_velocity, local_pos, yaw);
+
+	// Keep the aircraft body X axis aligned with the current target LOS projected onto the horizontal plane.
+	// target_state_local() holds the last valid direction inside the 0.5 m horizontal singularity region.
+	if (_target_direction_valid && _target_forward_xy.isAllFinite()) {
+		yaw = atan2f(_target_forward_xy(1), _target_forward_xy(0));
+
+	} else {
+		yaw = local_pos.heading;
+	}
+
 	matrix::Vector3f to_target = target_position - current_position;
 	const float distance = to_target.norm();
 	matrix::Vector3f velocity_sp = target_velocity;
@@ -1281,6 +1319,7 @@ void CooperativeRendezvous::Run()
 	_trajectory_publication_allowed = offboard_control_active(status);
 	_manual_control_sub.update(&_manual_control);
 	_dyt_guidance_status_sub.update(&_dyt_guidance_status);
+	_comm_emergency_status_sub.update(&_comm_emergency_status);
 	_geofence_result_sub.update(&_geofence_result);
 	update_operator_mode_exit(status);
 

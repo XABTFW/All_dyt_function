@@ -21,6 +21,7 @@ public:
 		bool return_active{false};
 		bool resume_distance_allowed{false};
 		bool midcourse_requested{false};
+		bool midcourse_active{false};
 	};
 
 	static bool landedOrStatusUnavailable(uint64_t now_us, uint64_t timestamp_us, bool landed)
@@ -50,7 +51,8 @@ public:
 				_state = State::Holding;
 				_loss_started = now_us;
 				_resume_mission = input.mission_intended;
-				_resume_offboard = input.offboard_intended;
+				_resume_midcourse = input.midcourse_active;
+				_resume_offboard = input.offboard_intended || _resume_midcourse;
 				return Action::Hold;
 			}
 
@@ -64,7 +66,8 @@ public:
 			}
 
 			if (!input.link_lost) {
-				const Action resume_action = input.midcourse_requested ? Action::ResumeOffboard : resumeAction();
+				const Action resume_action = (input.midcourse_requested || _resume_midcourse) ?
+							     Action::ResumeOffboard : resumeAction();
 
 				if (resume_action == Action::None) {
 					reset();
@@ -72,7 +75,7 @@ public:
 				} else {
 					_state = State::Resuming;
 					_resume_from_return = false;
-					_resume_midcourse_requested = input.midcourse_requested;
+					_resume_midcourse_requested = input.midcourse_requested || _resume_midcourse;
 				}
 
 				return resume_action;
@@ -95,13 +98,13 @@ public:
 			}
 
 			if (_return_recovery_allowed && !input.link_lost && input.return_active
-			    && input.resume_distance_allowed) {
+			    && (_resume_midcourse || input.resume_distance_allowed)) {
 				const Action resume_action = resumeAction();
 
 				if (resume_action != Action::None) {
 					_state = State::Resuming;
 					_resume_from_return = true;
-					_resume_midcourse_requested = false;
+					_resume_midcourse_requested = _resume_midcourse;
 					return resume_action;
 				}
 			}
@@ -143,6 +146,7 @@ public:
 		_return_recovery_allowed = false;
 		_resume_from_return = false;
 		_resume_midcourse_requested = false;
+		_resume_midcourse = false;
 	}
 
 	void resumeCompleted() { reset(); }
@@ -150,6 +154,7 @@ public:
 	State state() const { return _state; }
 	uint64_t lossStarted() const { return _loss_started; }
 	bool resumeFromReturn() const { return _state == State::Resuming && _resume_from_return; }
+	bool midcourseRecoveryActive() const { return _state != State::Idle && _resume_midcourse; }
 
 private:
 	Action resumeAction() const
@@ -168,4 +173,5 @@ private:
 	bool _return_recovery_allowed{false};
 	bool _resume_from_return{false};
 	bool _resume_midcourse_requested{false};
+	bool _resume_midcourse{false};
 };

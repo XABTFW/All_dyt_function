@@ -77,6 +77,30 @@ bool CommEmergency::resume_action_pending() const
 	       || _pending_action == CommEmergencyStateMachine::Action::ResumeOffboard;
 }
 
+bool CommEmergency::midcourse_recovery_ready(hrt_abstime now) const
+{
+	if (!_state_machine.midcourseRecoveryActive()) {
+		return true;
+	}
+
+	const bool guidance_status_fresh = _dyt_guidance_status.timestamp != 0
+					   && _dyt_guidance_status.timestamp <= now
+					   && now - _dyt_guidance_status.timestamp < 500_ms;
+
+	return guidance_status_fresh && _dyt_guidance_status.midcourse_target_valid
+	       && !_vehicle_status.failsafe;
+}
+
+void CommEmergency::publish_status(bool terminal_guidance_inhibited)
+{
+	comm_emergency_status_s status{};
+	status.timestamp = hrt_absolute_time();
+	status.active = _state_machine.state() != CommEmergencyStateMachine::State::Idle;
+	status.midcourse_recovery_active = _state_machine.midcourseRecoveryActive();
+	status.terminal_guidance_inhibited = terminal_guidance_inhibited;
+	_status_pub.publish(status);
+}
+
 uint8_t CommEmergency::expected_nav_state(CommEmergencyStateMachine::Action action) const
 {
 	switch (action) {
@@ -181,6 +205,7 @@ void CommEmergency::Run()
 	if (_param_enable.get() <= 0) {
 		reset();
 		_gcs_seen = false;
+		publish_status();
 		return;
 	}
 
@@ -262,6 +287,19 @@ void CommEmergency::Run()
 	const bool guidance_status_fresh = _dyt_guidance_status.timestamp != 0
 					   && _dyt_guidance_status.timestamp <= now
 					   && now - _dyt_guidance_status.timestamp < 500_ms;
+	const bool terminal_guidance_active = guidance_status_fresh
+					      && _dyt_guidance_status.guidance_phase
+					      == dyt_guidance_status_s::PHASE_TERMINAL;
+
+	if (terminal_guidance_active) {
+		reset();
+		publish_status(true);
+		return;
+	}
+
+	input.midcourse_active = guidance_status_fresh
+				 && _dyt_guidance_status.guidance_phase == dyt_guidance_status_s::PHASE_MIDCOURSE
+				 && _dyt_guidance_status.midcourse_active;
 	input.midcourse_requested = !_vehicle_status.failsafe && guidance_status_fresh
 				    && _dyt_guidance_status.gcs_phase_request == dyt_guidance_status_s::PHASE_MIDCOURSE
 				    && _dyt_guidance_status.command_phase == dyt_guidance_status_s::PHASE_MIDCOURSE
@@ -285,6 +323,7 @@ void CommEmergency::Run()
 
 	const CommEmergencyStateMachine::State state_before_update = _state_machine.state();
 	const CommEmergencyStateMachine::Action action = _state_machine.update(now, input, wait_us, timeout_action);
+	publish_status();
 
 	if (action != CommEmergencyStateMachine::Action::None) {
 		_pending_action = action;
@@ -326,6 +365,10 @@ void CommEmergency::Run()
 		} else if (_pending_action == CommEmergencyStateMachine::Action::ResumeOffboard) {
 			if (_state_machine.state() != CommEmergencyStateMachine::State::Resuming) {
 				_pending_action = CommEmergencyStateMachine::Action::None;
+				_offboard_prestream_start = 0;
+
+			} else if (!midcourse_recovery_ready(now)) {
+				// Require continuously fresh target data throughout the complete Offboard pre-stream interval.
 				_offboard_prestream_start = 0;
 
 			} else if (publish_offboard_resume_prestream(now)
