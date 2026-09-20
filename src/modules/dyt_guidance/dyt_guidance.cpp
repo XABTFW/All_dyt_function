@@ -5692,8 +5692,8 @@ void DytGuidance::Run()
 	const bool midcourse_pointing_request = midcourse_pointing_requested();
 	const bool auto_activation_enabled = control_mode() == dyt_guidance_status_s::CONTROL_MODE_FULL_AUTO;
 	const bool intercept_request = aux_switch_active(_param_int_aux.get());
-	const bool impact_aircraft = effective_vehicle_type() == dyt_guidance_status_s::VEHICLE_TYPE_FIGHTER;
-	const bool intercept_commanded = intercept_request || impact_aircraft;
+	// Enter intercept only on an explicit operator request. Vehicle type alone must not trigger it.
+	const bool intercept_commanded = intercept_request;
 	const bool activation_rising = activation_request && !_prev_activation_request;
 
 	// An intentional operator exit remains blocked until automatic mode is toggled

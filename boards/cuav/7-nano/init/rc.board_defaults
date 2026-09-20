@@ -310,6 +310,9 @@ param set-default DYTG_NET_ACC 4.0
 
 param set-default PD_GRIPPER_TYPE 0
 
+param set-default CRDZ_HIST_EN 0
+
+param set-default CRDZ_TRK_DLY 0
 # ===== 多旋翼姿态/角速度控制 MC（全部）（53 项）=====
 # 设置 Acro 模式横滚和俯仰摇杆指数曲线。
 param set-default MC_ACRO_EXPO 0
