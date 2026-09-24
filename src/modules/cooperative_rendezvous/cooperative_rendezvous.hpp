@@ -15,6 +15,7 @@
 #include <uORB/topics/follower_info.h>
 #include <uORB/topics/gcs_trajectory_setpoint.h>
 #include <uORB/topics/geofence_result.h>
+#include <uORB/topics/home_position.h>
 #include <uORB/topics/manual_control_setpoint.h>
 #include <uORB/topics/offboard_control_mode.h>
 #include <uORB/topics/parameter_update.h>
@@ -80,6 +81,7 @@ private:
 	bool offboard_prestream_allowed(const vehicle_status_s &status) const;
 	bool offboard_preparation_allowed(const vehicle_status_s &status) const;
 	bool target_data_fresh() const;
+	bool target_data_fresh_since(hrt_abstime since) const;
 	void publish_status(const vehicle_status_s &status, bool local_position_is_valid, bool controlling_vehicle);
 	bool local_position_valid(const vehicle_local_position_s &local_pos) const;
 	bool update_map_projection(const vehicle_local_position_s &local_pos);
@@ -88,7 +90,7 @@ private:
 	void update_gcs_setpoint();
 	bool gcs_setpoint_active(const vehicle_local_position_s &local_pos, matrix::Vector3f &target_position,
 				 matrix::Vector3f &target_velocity, float &yaw);
-	void enforce_target_minimum_height(matrix::Vector3f &target_position) const;
+	bool enforce_target_minimum_height(matrix::Vector3f &target_position);
 	void push_target_history(const matrix::Vector3f &target_position);
 	bool delayed_target_position(matrix::Vector3f &target_position) const;
 	void reset_target_history();
@@ -107,6 +109,7 @@ private:
 	void publish_offboard_heartbeat(bool position_control, bool velocity_control);
 	void publish_trajectory_setpoint(const matrix::Vector3f &position, const matrix::Vector3f &velocity, float yaw);
 	void request_offboard(const vehicle_status_s &status);
+	void request_loiter(const vehicle_status_s &status);
 	void request_rtl(const vehicle_status_s &status);
 	void request_arm(const vehicle_status_s &status);
 	void hold_position(const vehicle_local_position_s &local_pos);
@@ -146,7 +149,8 @@ private:
 	bool _arrival_follow_active{false};
 	bool _geofence_rtl_active{false};
 	bool _geofence_resume_pending{false};
-	hrt_abstime _geofence_clear_time{0};
+	hrt_abstime _geofence_loiter_time{0};
+	hrt_abstime _geofence_target_invalid_time{0};
 	bool _trajectory_publication_allowed{false};
 	bool _gcs_midcourse_engaged{false};
 	bool _midcourse_operator_exit_blocked{false};
@@ -171,6 +175,7 @@ private:
 	TargetHistorySample _target_history[kTargetHistoryLength]{};
 
 	manual_control_setpoint_s _manual_control{};
+	home_position_s _home_position{};
 	dyt_guidance_status_s _dyt_guidance_status{};
 	comm_emergency_status_s _comm_emergency_status{};
 	geofence_result_s _geofence_result{};
@@ -178,6 +183,7 @@ private:
 	uORB::Subscription _vehicle_local_position_sub{ORB_ID(vehicle_local_position)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::Subscription _follower_info_sub{ORB_ID(follower_info)};
+	uORB::Subscription _home_position_sub{ORB_ID(home_position)};
 	uORB::Subscription _manual_control_sub{ORB_ID(manual_control_setpoint)};
 	uORB::Subscription _dyt_guidance_status_sub{ORB_ID(dyt_guidance_status)};
 	uORB::Subscription _comm_emergency_status_sub{ORB_ID(comm_emergency_status)};

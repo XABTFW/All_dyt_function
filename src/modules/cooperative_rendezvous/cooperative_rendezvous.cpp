@@ -146,9 +146,11 @@ void CooperativeRendezvous::update_operator_mode_exit(const vehicle_status_s &st
 	}
 
 	const bool request_active = phase_requested || switch_requested || _gcs_midcourse_engaged;
-	const bool automatic_geofence_return = (_geofence_rtl_active || _geofence_resume_pending)
-					       && status.nav_state_user_intention
-					       == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL;
+	const bool automatic_geofence_recovery = (_geofence_rtl_active || _geofence_resume_pending)
+					       && (status.nav_state_user_intention
+						   == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+						   || status.nav_state_user_intention
+						   == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER);
 	const bool automatic_comm_recovery = comm_midcourse_recovery_active()
 					     && (status.nav_state_user_intention
 						 == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER
@@ -159,7 +161,7 @@ void CooperativeRendezvous::update_operator_mode_exit(const vehicle_status_s &st
 		_midcourse_offboard_seen = true;
 	}
 
-	if (_midcourse_offboard_seen && vehicle_status_fresh(status) && !status.failsafe && !automatic_geofence_return
+	if (_midcourse_offboard_seen && vehicle_status_fresh(status) && !status.failsafe && !automatic_geofence_recovery
 	    && !automatic_comm_recovery
 	    && status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD) {
 		_midcourse_operator_exit_blocked = true;
@@ -257,10 +259,15 @@ bool CooperativeRendezvous::offboard_preparation_allowed(const vehicle_status_s 
 
 bool CooperativeRendezvous::target_data_fresh() const
 {
+	return target_data_fresh_since(0);
+}
+
+bool CooperativeRendezvous::target_data_fresh_since(hrt_abstime since) const
+{
 	const hrt_abstime now = hrt_absolute_time();
 
 	if (_param_gcs_enable.get() > 0 && _gcs_target_active && _last_gcs_setpoint_time != 0
-	    && _last_gcs_setpoint_time <= now) {
+	    && _last_gcs_setpoint_time >= since && _last_gcs_setpoint_time <= now) {
 		const float timeout_param = _param_gcs_timeout.get();
 		const float timeout_s = PX4_ISFINITE(timeout_param) ? math::constrain(timeout_param, 0.1f, 5.f) : 0.6f;
 
@@ -269,7 +276,7 @@ bool CooperativeRendezvous::target_data_fresh() const
 		}
 	}
 
-	if (!_map_ref_initialized || _last_target_time == 0 || _last_target_time > now
+	if (!_map_ref_initialized || _last_target_time == 0 || _last_target_time < since || _last_target_time > now
 	    || !PX4_ISFINITE(_target_info.lat) || !PX4_ISFINITE(_target_info.lon) || !PX4_ISFINITE(_target_info.alt)) {
 		return false;
 	}
@@ -477,6 +484,10 @@ bool CooperativeRendezvous::gcs_setpoint_active(const vehicle_local_position_s &
 	target_position = matrix::Vector3f(_gcs_setpoint.position);
 	target_velocity = matrix::Vector3f(_gcs_setpoint.velocity);
 
+	if (!enforce_target_minimum_height(target_position)) {
+		return false;
+	}
+
 	if (!target_velocity.isAllFinite()) {
 		target_velocity.zero();
 	}
@@ -485,23 +496,36 @@ bool CooperativeRendezvous::gcs_setpoint_active(const vehicle_local_position_s &
 	return true;
 }
 
-void CooperativeRendezvous::enforce_target_minimum_height(matrix::Vector3f &target_position) const
+bool CooperativeRendezvous::enforce_target_minimum_height(matrix::Vector3f &target_position)
 {
 	if (_param_minimum_height_enable.get() <= 0) {
-		return;
+		return true;
 	}
 
 	const float minimum_height = _param_minimum_height.get();
 
 	if (!PX4_ISFINITE(minimum_height) || fabsf(minimum_height) < 0.0001f || !PX4_ISFINITE(target_position(2))) {
-		return;
+		return true;
 	}
 
-	const float highest_allowed_down = -math::constrain(minimum_height, -100.f, 100.f);
+	if (!_home_position.valid_lpos || !PX4_ISFINITE(_home_position.z)) {
+		const hrt_abstime now = hrt_absolute_time();
+
+		if (now - _last_status_log > 2_s) {
+			PX4_WARN("cooperative rendezvous: home local altitude unavailable");
+			_last_status_log = now;
+		}
+
+		return false;
+	}
+
+	const float highest_allowed_down = _home_position.z - math::constrain(minimum_height, -100.f, 100.f);
 
 	if (target_position(2) > highest_allowed_down) {
 		target_position(2) = highest_allowed_down;
 	}
+
+	return true;
 }
 
 void CooperativeRendezvous::push_target_history(const matrix::Vector3f &target_position)
@@ -706,10 +730,16 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 	}
 
 	target_position(2) += vertical_offset;
-	enforce_target_minimum_height(target_position);
+	if (!enforce_target_minimum_height(target_position)) {
+		return false;
+	}
+
 	push_target_history(target_position);
 	delayed_target_position(target_position);
-	enforce_target_minimum_height(target_position);
+
+	if (!enforce_target_minimum_height(target_position)) {
+		return false;
+	}
 
 	return PX4_ISFINITE(target_position(2));
 }
@@ -977,6 +1007,31 @@ void CooperativeRendezvous::request_offboard(const vehicle_status_s &status)
 	_last_mode_request = now;
 }
 
+void CooperativeRendezvous::request_loiter(const vehicle_status_s &status)
+{
+	const hrt_abstime now = hrt_absolute_time();
+
+	if (!_options.auto_offboard || status.arming_state != vehicle_status_s::ARMING_STATE_ARMED ||
+	    status.nav_state == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER ||
+	    status.timestamp == 0 || now - status.timestamp >= 1_s || now - _last_mode_request < 1_s) {
+		return;
+	}
+
+	vehicle_command_s command{};
+	command.timestamp = now;
+	command.command = vehicle_command_s::VEHICLE_CMD_DO_SET_MODE;
+	command.param1 = 1.f;
+	command.param2 = PX4_CUSTOM_MAIN_MODE_AUTO;
+	command.param3 = PX4_CUSTOM_SUB_MODE_AUTO_LOITER;
+	command.target_system = status.system_id;
+	command.target_component = status.component_id;
+	command.source_system = status.system_id;
+	command.source_component = status.component_id;
+	command.from_external = false;
+	_vehicle_command_pub.publish(command);
+	_last_mode_request = now;
+}
+
 void CooperativeRendezvous::request_rtl(const vehicle_status_s &status)
 {
 	const hrt_abstime now = hrt_absolute_time();
@@ -1013,7 +1068,8 @@ bool CooperativeRendezvous::geofence_avoidance_required(const vehicle_status_s &
 
 		_geofence_rtl_active = true;
 		_geofence_resume_pending = false;
-		_geofence_clear_time = 0;
+		_geofence_loiter_time = 0;
+		_geofence_target_invalid_time = 0;
 	}
 
 	if (_geofence_rtl_active) {
@@ -1025,8 +1081,9 @@ bool CooperativeRendezvous::geofence_avoidance_required(const vehicle_status_s &
 
 		_geofence_rtl_active = false;
 		_geofence_resume_pending = true;
-		_geofence_clear_time = now;
-		PX4_INFO("cooperative rendezvous: geofence clear, preparing guidance resume");
+		_geofence_loiter_time = 0;
+		_geofence_target_invalid_time = 0;
+		PX4_INFO("cooperative rendezvous: geofence clear, requesting Loiter before guidance resume");
 	}
 
 	return false;
@@ -1232,7 +1289,8 @@ void CooperativeRendezvous::run_rendezvous(const vehicle_local_position_s &local
 		if (status.nav_state == vehicle_status_s::NAVIGATION_STATE_OFFBOARD && status.timestamp != 0 &&
 		    hrt_elapsed_time(&status.timestamp) < 1_s) {
 			_geofence_resume_pending = false;
-			_geofence_clear_time = 0;
+			_geofence_loiter_time = 0;
+			_geofence_target_invalid_time = 0;
 		}
 
 	} else if (status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_MISSION &&
@@ -1317,6 +1375,7 @@ void CooperativeRendezvous::Run()
 	_vehicle_local_position_sub.copy(&local_pos);
 	_vehicle_status_sub.copy(&status);
 	_trajectory_publication_allowed = offboard_control_active(status);
+	_home_position_sub.update(&_home_position);
 	_manual_control_sub.update(&_manual_control);
 	_dyt_guidance_status_sub.update(&_dyt_guidance_status);
 	_comm_emergency_status_sub.update(&_comm_emergency_status);
@@ -1353,7 +1412,8 @@ void CooperativeRendezvous::Run()
 			_offboard_prestream_start = 0;
 			_geofence_rtl_active = false;
 			_geofence_resume_pending = false;
-			_geofence_clear_time = 0;
+			_geofence_loiter_time = 0;
+			_geofence_target_invalid_time = 0;
 			reset_velocity_slew();
 			reset_target_filter();
 			reset_target_history();
@@ -1377,17 +1437,50 @@ void CooperativeRendezvous::Run()
 			// trajectory here would race the active FlightTask on the shared uORB topic.
 			if (_geofence_resume_pending) {
 				_offboard_prestream_start = 0;
-				// A geofence clear and the Commander failsafe state are not published in the
-				// same cycle. Keep the heartbeat alive while Commander releases RTL, but do
-				// not request Offboard until the failsafe is clear and a target is fresh.
+				// Leaving the fence clears the breach flag, but PX4 keeps the RTL failsafe
+				// latched until a mode change. Enter Loiter first, then resume Offboard only
+				// with a fresh target. If no target arrives, return instead of using stale data.
 				if (vehicle_status_fresh(status)
 				    && status.arming_state == vehicle_status_s::ARMING_STATE_ARMED) {
 					publish_offboard_heartbeat(true, false);
 					const hrt_abstime now = hrt_absolute_time();
 
-					if (!status.failsafe && target_data_fresh() && _geofence_clear_time != 0
-					    && _geofence_clear_time <= now && now - _geofence_clear_time >= 1_s) {
-						request_offboard(status);
+					if (status.nav_state != vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER || status.failsafe) {
+						request_loiter(status);
+
+					} else {
+						if (_geofence_loiter_time == 0 || _geofence_loiter_time > now) {
+							_geofence_loiter_time = now;
+							PX4_INFO("cooperative rendezvous: Loiter active, waiting for fresh target");
+						}
+
+						const float timeout_param = _param_target_timeout.get();
+						const float timeout_s = PX4_ISFINITE(timeout_param) ?
+								math::constrain(timeout_param, 0.1f, 30.f) : 5.f;
+						const hrt_abstime target_wait_timeout = static_cast<hrt_abstime>(timeout_s * 1_s);
+						const bool target_fresh = target_data_fresh_since(_geofence_loiter_time);
+
+						if (target_fresh) {
+							_geofence_target_invalid_time = 0;
+
+							if (now - _geofence_loiter_time >= kOffboardPrestreamDuration) {
+								request_offboard(status);
+							}
+
+						} else {
+							if (_geofence_target_invalid_time == 0 || _geofence_target_invalid_time > now) {
+								_geofence_target_invalid_time = now;
+							}
+
+							if (now - _geofence_target_invalid_time >= target_wait_timeout) {
+								PX4_WARN("cooperative rendezvous: no fresh target after %.1fs in Loiter, requesting RTL",
+									 (double)timeout_s);
+								_geofence_resume_pending = false;
+								_geofence_loiter_time = 0;
+								_geofence_target_invalid_time = 0;
+								request_rtl(status);
+							}
+						}
 					}
 				}
 
@@ -1422,7 +1515,8 @@ void CooperativeRendezvous::Run()
 		// also covers the GCS-target branch in run_rendezvous().
 		_offboard_prestream_start = 0;
 		_geofence_resume_pending = false;
-		_geofence_clear_time = 0;
+		_geofence_loiter_time = 0;
+		_geofence_target_invalid_time = 0;
 
 		run_rendezvous(local_pos, status);
 		publish_status(status, true, true);

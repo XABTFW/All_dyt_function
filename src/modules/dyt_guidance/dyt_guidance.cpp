@@ -32,6 +32,7 @@
 #include <uORB/topics/geofence_result.h>
 #include <uORB/topics/gripper.h>
 #include <uORB/topics/home_position.h>
+#include <uORB/topics/hover_thrust_estimate.h>
 #include <uORB/topics/manual_control_setpoint.h>
 #include <uORB/topics/manual_control_switches.h>
 #include <uORB/topics/offboard_control_mode.h>
@@ -41,6 +42,7 @@
 #include <uORB/topics/airspeed_validated.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_attitude.h>
+#include <uORB/topics/vehicle_attitude_setpoint.h>
 #include <uORB/topics/vehicle_command.h>
 #include <uORB/topics/vehicle_global_position.h>
 #include <uORB/topics/vehicle_local_position.h>
@@ -133,6 +135,9 @@ private:
 	static constexpr int32_t NET_RELEASE_ATTITUDE_MAX_MS{500};
 	static constexpr hrt_abstime NET_RELEASE_POST_PWM_ATTITUDE_TIME{100_ms};
 	static constexpr hrt_abstime NET_RELEASE_TIMEOUT_HOLD_TIME{2_s};
+	static constexpr float NET_RELEASE_ALIGNMENT_DEFAULT_DEG{10.f};
+	static constexpr hrt_abstime NET_RELEASE_CONTROL_DATA_MAX_AGE{100_ms};
+	static constexpr hrt_abstime NET_RELEASE_HOVER_THRUST_MAX_AGE{1_s};
 
 	struct ScanArea {
 		float yaw_min_deg{0.f};
@@ -242,8 +247,8 @@ private:
 	void capture_terminal_loss_coast();
 	bool publish_terminal_loss_coast_setpoint();
 	void publish_track_setpoint(const TrackProfile &profile);
-	void publish_terminal_track_setpoint(const TrackProfile &profile, hrt_abstime now,
-					     const Vector3f &vehicle_velocity);
+	bool publish_terminal_track_setpoint(const TrackProfile &profile, hrt_abstime now,
+					     const Vector3f &vehicle_velocity, bool publish_setpoint = true);
 	void publish_offboard_mode(bool position_mode);
 	void request_offboard_mode();
 	void request_position_mode();
@@ -287,7 +292,11 @@ private:
 	void push_image_speed_sample(hrt_abstime timestamp, float distance_m);
 	bool estimate_image_closing_speed(float &closing_speed_m_s) const;
 	bool build_net_release_los_ned(Vector3f &los_ned) const;
-	Vector3f net_release_pitch_accel_ned() const;
+	bool publish_net_release_attitude_setpoint(hrt_abstime now);
+	void publish_offboard_attitude_mode();
+	void start_net_release_attitude_control();
+	void reset_net_release_attitude_control();
+	float net_release_hover_thrust() const;
 	bool update_laser_distance(hrt_abstime now);
 	void send_net_release_command(hrt_abstime now);
 	void clear_net_release_trigger();
@@ -421,6 +430,9 @@ private:
 	bool _net_release_pitch_pending{false};
 	bool _net_release_manual_sequence{false};
 	bool _net_release_auto_timeout_blocked{false};
+	bool _net_release_attitude_control_active{false};
+	bool _net_release_attitude_sp_valid{false};
+	bool _net_release_thrust_saturated{false};
 	uint8_t _net_release_fire_confirmation_count{0};
 	bool _net_hold_pending{false};
 	bool _image_range_valid{false};
@@ -468,6 +480,9 @@ private:
 	float _fusion_initial_speed_scale{NAN};
 	float _fusion_laser_distance_m{NAN};
 	float _fusion_laser_closing_speed_m_s{NAN};
+	float _net_release_alignment_error_rad{NAN};
+	float _net_release_thrust_sp{NAN};
+	Quatf _net_release_attitude_sp{};
 	ImageRangeSample _image_speed_history[IMAGE_SPEED_HISTORY_LEN]{};
 	float _image_distance_raw_history[IMAGE_DISTANCE_MEDIAN_LEN]{};
 	uint8_t _image_speed_history_count{0};
@@ -519,6 +534,7 @@ private:
 	vehicle_attitude_s _vehicle_attitude{};
 	vehicle_global_position_s _vehicle_global_position{};
 	home_position_s _home_position{};
+	hover_thrust_estimate_s _hover_thrust_estimate{};
 	vehicle_local_position_s _vehicle_local_position{};
 	vehicle_local_position_setpoint_s _vehicle_local_position_setpoint{};
 	vehicle_status_s _vehicle_status{};
@@ -592,6 +608,7 @@ private:
 	uORB::Subscription _follower_info_sub{ORB_ID(follower_info)};
 	uORB::Subscription _gripper_sub{ORB_ID(gripper)};
 	uORB::Subscription _home_position_sub{ORB_ID(home_position)};
+	uORB::Subscription _hover_thrust_estimate_sub{ORB_ID(hover_thrust_estimate)};
 	uORB::Subscription _vehicle_attitude_sub{ORB_ID(vehicle_attitude)};
 	uORB::Subscription _vehicle_global_position_sub{ORB_ID(vehicle_global_position)};
 	uORB::Subscription _vehicle_local_position_sub{ORB_ID(vehicle_local_position)};
@@ -605,6 +622,7 @@ private:
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 
 	uORB::Publication<trajectory_setpoint_s> _trajectory_setpoint_pub{ORB_ID(trajectory_setpoint)};
+	uORB::Publication<vehicle_attitude_setpoint_s> _vehicle_attitude_setpoint_pub{ORB_ID(vehicle_attitude_setpoint)};
 	uORB::Publication<offboard_control_mode_s> _offboard_control_mode_pub{ORB_ID(offboard_control_mode)};
 	uORB::Publication<vehicle_command_s> _vehicle_command_pub{ORB_ID(vehicle_command)};
 	uORB::Publication<dyt_command_s> _dyt_command_pub{ORB_ID(dyt_command)};
@@ -677,13 +695,14 @@ private:
 		(ParamFloat<px4::params::DYTG_RNG_MIN>) _param_net_range_min,
 		(ParamFloat<px4::params::DYTG_RNG_MAX>) _param_net_range_max,
 		(ParamInt<px4::params::DYTG_SZ_MS>) _param_net_release_pitch_ms,
-		(ParamFloat<px4::params::DYTG_ALP_K>) _param_alpha_gain,
-		(ParamFloat<px4::params::DYTG_ALP_MAX>) _param_alpha_max_deg,
 		(ParamInt<px4::params::DYTG_FIRE_AUX>) _param_manual_fire_aux,
 		(ParamInt<px4::params::DYTG_FIRE_BTN>) _param_manual_fire_btn,
 		(ParamInt<px4::params::DYTG_FIRE_EN>) _param_net_release_enable,
 		(ParamInt<px4::params::DYTG_FUS_EN>) _param_range_fusion_enable,
+		(ParamFloat<px4::params::DYTG_IMG_SCALE>) _param_image_distance_scale,
 		(ParamFloat<px4::params::DYTG_FIRE_D>) _param_net_capture_distance,
+		(ParamFloat<px4::params::DYTG_FIRE_ANG>) _param_net_release_angle_deg,
+		(ParamFloat<px4::params::DYTG_NET_TILT>) _param_net_release_tilt_deg,
 		(ParamInt<px4::params::DYTG_HOLD_EN>) _param_net_hold_enable,
 		(ParamFloat<px4::params::DYTG_STOP_D>) _param_net_stop_distance,
 		(ParamFloat<px4::params::DYTG_STOP_V>) _param_net_stop_speed,
@@ -729,6 +748,10 @@ private:
 		(ParamFloat<px4::params::DYTG_MNT_R>) _param_mount_roll_deg,
 		(ParamFloat<px4::params::DYTG_MNT_P>) _param_mount_pitch_deg,
 		(ParamFloat<px4::params::DYTG_MNT_Y>) _param_mount_yaw_deg,
+		(ParamFloat<px4::params::MPC_THR_HOVER>) _param_mpc_thr_hover,
+		(ParamFloat<px4::params::MPC_THR_MIN>) _param_mpc_thr_min,
+		(ParamFloat<px4::params::MPC_THR_MAX>) _param_mpc_thr_max,
+		(ParamBool<px4::params::MPC_USE_HTE>) _param_mpc_use_hte,
 		(ParamFloat<px4::params::DYT_HOME_YAW>) _param_home_yaw_deg,
 		(ParamFloat<px4::params::DYT_HOME_PIT>) _param_home_pitch_deg
 	);
@@ -843,6 +866,11 @@ void DytGuidance::show_status()
 		 _net_release_pitch_until > hrt_absolute_time(),
 		 _net_release_pitch_pending,
 		 _net_release_sent);
+	PX4_INFO("net attitude: direct=%d error=%.1f deg terminal thrust=%.3f saturated=%d",
+		 _net_release_attitude_control_active,
+		 static_cast<double>(math::degrees(_net_release_alignment_error_rad)),
+		 static_cast<double>(_net_release_thrust_sp),
+		 _net_release_thrust_saturated);
 	PX4_INFO("net fusion: laser=(%.2f m, %.2f m/s) fused=(%.2f m, %.2f m/s) scale=(%.3f, %.3f) used=%d valid=%d",
 		 static_cast<double>(_fusion_laser_distance_m),
 		 static_cast<double>(_fusion_laser_closing_speed_m_s),
@@ -1227,11 +1255,15 @@ void DytGuidance::update_midcourse_mode_exit()
 					     && _comm_emergency_status.midcourse_recovery_active
 					     && (user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER
 						 || user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL);
+	const bool automatic_geofence_recovery = _geofence_midcourse_resume_active
+						 && (user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER
+						     || user_intention == vehicle_status_s::NAVIGATION_STATE_AUTO_RTL);
 
 	if (_geofence_midcourse_resume_active
 	    && user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD
-	    && user_intention != vehicle_status_s::NAVIGATION_STATE_AUTO_RTL) {
-		// An operator-selected mode other than the fence RTL cancels automatic resume.
+	    && user_intention != vehicle_status_s::NAVIGATION_STATE_AUTO_RTL
+	    && user_intention != vehicle_status_s::NAVIGATION_STATE_AUTO_LOITER) {
+		// An operator-selected mode outside the fence recovery sequence cancels automatic resume.
 		_geofence_midcourse_resume_active = false;
 	}
 
@@ -1269,6 +1301,7 @@ void DytGuidance::update_midcourse_mode_exit()
 
 	if (_midcourse_offboard_seen && vehicle_status_fresh() && !_vehicle_status.failsafe
 	    && !automatic_comm_recovery
+	    && !automatic_geofence_recovery
 	    && _vehicle_status.nav_state_user_intention != vehicle_status_s::NAVIGATION_STATE_OFFBOARD) {
 		_midcourse_operator_exit_blocked = true;
 		_midcourse_offboard_seen = false;
@@ -1318,6 +1351,7 @@ void DytGuidance::update_subscriptions()
 
 	_vehicle_global_position_sub.update(&_vehicle_global_position);
 	_home_position_sub.update(&_home_position);
+	_hover_thrust_estimate_sub.update(&_hover_thrust_estimate);
 	_vehicle_local_position_sub.update(&_vehicle_local_position);
 	_vehicle_local_position_setpoint_sub.update(&_vehicle_local_position_setpoint);
 	_vehicle_status_sub.update(&_vehicle_status);
@@ -1330,7 +1364,6 @@ void DytGuidance::update_subscriptions()
 	_comm_emergency_status_sub.update(&_comm_emergency_status);
 	_geofence_result_sub.update(&_geofence_result);
 	update_geofence_return_state();
-
 	update_gripper_release_trigger(hrt_absolute_time());
 
 	dyt_target_s target{};
@@ -2449,6 +2482,7 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 		_net_release_fire_at = 0;
 		_net_release_pitch_pending = false;
 		_net_release_manual_sequence = false;
+		reset_net_release_attitude_control();
 		reset_net_release_fire_confirmation();
 
 		if (_net_release_sent) {
@@ -2479,8 +2513,16 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 			const bool fusion_ready = update_image_net_estimate(now);
 			const float fire_distance_m = capture_distance_m
 						      + NET_CAPTURE_FIRE_LOOKAHEAD_S * _fused_closing_speed_m_s;
+			const float configured_angle_deg = _param_net_release_angle_deg.get();
+			const float max_alignment_error_rad = math::radians(PX4_ISFINITE(configured_angle_deg) ?
+							      math::constrain(configured_angle_deg, 0.1f, 90.f) :
+							      NET_RELEASE_ALIGNMENT_DEFAULT_DEG);
 			const bool fire_condition = fusion_ready && PX4_ISFINITE(fire_distance_m)
-						    && _fused_distance_m < fire_distance_m;
+						    && _fused_distance_m < fire_distance_m
+						    && _net_release_attitude_control_active
+						    && PX4_ISFINITE(_net_release_alignment_error_rad)
+						    && _net_release_alignment_error_rad
+						    < max_alignment_error_rad;
 			fire_now = update_net_release_fire_confirmation(fire_condition);
 		}
 
@@ -2489,8 +2531,7 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 			_net_release_sent = true;
 			_net_release_pitch_pending = false;
 			_net_release_manual_sequence = false;
-			_net_release_pitch_until = math::min(_net_release_pitch_until,
-							      now + NET_RELEASE_POST_PWM_ATTITUDE_TIME);
+			_net_release_pitch_until = now + NET_RELEASE_POST_PWM_ATTITUDE_TIME;
 		}
 
 		if (now >= _net_release_pitch_until) {
@@ -2519,6 +2560,7 @@ void DytGuidance::update_net_release_trigger(hrt_abstime now)
 			_net_release_pitch_pending = true;
 			_net_release_manual_sequence = manual_sequence;
 			_net_hold_pending = false;
+			start_net_release_attitude_control();
 
 		} else {
 			send_net_release_command(now);
@@ -2850,8 +2892,13 @@ bool DytGuidance::update_image_net_estimate(hrt_abstime now)
 		return false;
 	}
 
-	_image_distance_area_m = IMAGE_AREA_DISTANCE_SCALE / sqrtf(_bbox_area_ratio) - IMAGE_AREA_DISTANCE_OFFSET;
-	_image_distance_long_m = IMAGE_LONG_DISTANCE_SCALE / long_ratio - IMAGE_LONG_DISTANCE_OFFSET;
+	const float configured_image_distance_scale = _param_image_distance_scale.get();
+	const float image_distance_scale = PX4_ISFINITE(configured_image_distance_scale) ?
+					   math::constrain(configured_image_distance_scale, 0.1f, 5.f) : 1.f;
+	_image_distance_area_m = (IMAGE_AREA_DISTANCE_SCALE / sqrtf(_bbox_area_ratio) - IMAGE_AREA_DISTANCE_OFFSET)
+				 * image_distance_scale;
+	_image_distance_long_m = (IMAGE_LONG_DISTANCE_SCALE / long_ratio - IMAGE_LONG_DISTANCE_OFFSET)
+				 * image_distance_scale;
 	_image_distance_disagreement_m = fabsf(_image_distance_area_m - _image_distance_long_m);
 	// The requested net-capture range is the long-side fit. The area fit and the
 	// difference remain diagnostic only and never inhibit or initiate release.
@@ -3149,53 +3196,174 @@ bool DytGuidance::build_net_release_los_ned(Vector3f &los_ned) const
 	return true;
 }
 
-Vector3f DytGuidance::net_release_pitch_accel_ned() const
+float DytGuidance::net_release_hover_thrust() const
 {
-	if (_net_release_pitch_until == 0 || _vehicle_attitude.timestamp == 0
-	    || hrt_elapsed_time(&_vehicle_attitude.timestamp) > 200_ms) {
-		return Vector3f{};
+	if (_param_mpc_use_hte.get() && _hover_thrust_estimate.valid && _hover_thrust_estimate.timestamp != 0
+	    && hrt_elapsed_time(&_hover_thrust_estimate.timestamp) <= NET_RELEASE_HOVER_THRUST_MAX_AGE
+	    && PX4_ISFINITE(_hover_thrust_estimate.hover_thrust)) {
+		return math::constrain(_hover_thrust_estimate.hover_thrust, 0.1f, 0.9f);
 	}
 
-	const Quatf attitude_q(_vehicle_attitude.q);
-	Vector3f net_los_ned;
+	const float hover_thrust = _param_mpc_thr_hover.get();
+	return PX4_ISFINITE(hover_thrust) ? math::constrain(hover_thrust, 0.1f, 0.9f) : 0.5f;
+}
 
-	if (!attitude_q.isAllFinite() || !build_net_release_los_ned(net_los_ned)) {
-		return Vector3f{};
+void DytGuidance::start_net_release_attitude_control()
+{
+	_net_release_attitude_control_active = _vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING;
+	_net_release_attitude_sp_valid = false;
+	_net_release_attitude_sp = Quatf{};
+	_net_release_alignment_error_rad = NAN;
+	_net_release_thrust_sp = NAN;
+	_net_release_thrust_saturated = false;
+}
+
+void DytGuidance::reset_net_release_attitude_control()
+{
+	_net_release_attitude_control_active = false;
+	_net_release_attitude_sp_valid = false;
+	_net_release_attitude_sp = Quatf{};
+	_net_release_thrust_saturated = false;
+	_net_release_alignment_error_rad = NAN;
+	_net_release_thrust_sp = NAN;
+}
+
+void DytGuidance::publish_offboard_attitude_mode()
+{
+	if (!offboard_preparation_allowed()) {
+		return;
 	}
 
+	offboard_control_mode_s mode{};
+	mode.timestamp = hrt_absolute_time();
+	mode.position = false;
+	mode.velocity = false;
+	mode.acceleration = false;
+	mode.attitude = true;
+	mode.body_rate = false;
+	mode.thrust_and_torque = false;
+	mode.direct_actuator = false;
+	_offboard_control_mode_pub.publish(mode);
+}
+
+bool DytGuidance::publish_net_release_attitude_setpoint(hrt_abstime now)
+{
+	const bool state_fresh = _vehicle_attitude.timestamp != 0 && _vehicle_attitude.timestamp <= now
+				 && now - _vehicle_attitude.timestamp <= NET_RELEASE_CONTROL_DATA_MAX_AGE;
+	Quatf attitude_q(_vehicle_attitude.q);
+	Vector3f los_ned;
+
+	if (!_net_release_attitude_control_active || !state_fresh || !attitude_q.isAllFinite()
+	    || attitude_q.norm_squared() < 1e-6f) {
+		return false;
+	}
+
+	attitude_q.normalize();
 	const Dcmf body_to_ned(attitude_q);
-	const Vector3f body_forward_ned = body_to_ned * Vector3f(1.f, 0.f, 0.f);
-	const Vector3f launch_axis_ned = body_to_ned * Vector3f(0.f, 0.f, -1.f);
+	Quatf attitude_sp;
+	const bool los_valid = build_net_release_los_ned(los_ned);
 
-	if (!body_forward_ned.isAllFinite() || !launch_axis_ned.isAllFinite()) {
-		return Vector3f{};
+	if (los_valid) {
+		const Vector3f launch_axis_ned = body_to_ned * Vector3f(0.f, 0.f, -1.f);
+		_net_release_alignment_error_rad = acosf(math::constrain(launch_axis_ned.dot(los_ned), -1.f, 1.f));
+		Vector3f body_z_sp = -los_ned;
+		const float configured_tilt_deg = _param_net_release_tilt_deg.get();
+		const float tilt_limit_deg = PX4_ISFINITE(configured_tilt_deg) ?
+					     math::constrain(configured_tilt_deg, 5.f, 85.f) : 85.f;
+		const float tilt_limit = math::radians(tilt_limit_deg);
+		const float requested_tilt = acosf(math::constrain(body_z_sp(2), -1.f, 1.f));
+
+		if (requested_tilt > tilt_limit) {
+			Vector2f horizontal(body_z_sp(0), body_z_sp(1));
+			const float horizontal_norm = horizontal.norm();
+
+			if (!PX4_ISFINITE(horizontal_norm) || horizontal_norm < 1e-4f) {
+				return false;
+			}
+
+			horizontal *= sinf(tilt_limit) / horizontal_norm;
+			body_z_sp = Vector3f(horizontal(0), horizontal(1), cosf(tilt_limit));
+		}
+
+		Vector3f body_x_now = body_to_ned * Vector3f(1.f, 0.f, 0.f);
+		Vector3f body_x_sp = body_x_now - body_z_sp * body_z_sp.dot(body_x_now);
+
+		if (body_x_sp.norm_squared() < 1e-6f) {
+			const Vector3f body_y_now = body_to_ned * Vector3f(0.f, 1.f, 0.f);
+			body_x_sp = body_y_now.cross(body_z_sp);
+		}
+
+		if (!body_x_sp.isAllFinite() || body_x_sp.norm_squared() < 1e-6f) {
+			return false;
+		}
+
+		body_x_sp.normalize();
+		Vector3f body_y_sp = body_z_sp.cross(body_x_sp);
+		body_y_sp.normalize();
+		Dcmf desired_attitude;
+
+		for (int axis = 0; axis < 3; ++axis) {
+			desired_attitude(axis, 0) = body_x_sp(axis);
+			desired_attitude(axis, 1) = body_y_sp(axis);
+			desired_attitude(axis, 2) = body_z_sp(axis);
+		}
+
+		attitude_sp = Quatf(desired_attitude);
+
+		if (!attitude_sp.isAllFinite() || attitude_sp.norm_squared() < 1e-6f) {
+			return false;
+		}
+
+		attitude_sp.normalize();
+		_net_release_attitude_sp = attitude_sp;
+		_net_release_attitude_sp_valid = true;
+
+	} else if (_net_release_sent && _net_release_attitude_sp_valid) {
+		// After PWM, keep the last valid launch attitude for the short post-release interval.
+		attitude_sp = _net_release_attitude_sp;
+
+	} else {
+		return false;
 	}
 
-	// NED +Z points down. Correct the elevation difference between the current
-	// target LOS and the body -Z launch axis using the original correction sign.
-	const float launch_horizontal = Vector2f(launch_axis_ned(0), launch_axis_ned(1)).norm();
-	const float los_horizontal = Vector2f(net_los_ned(0), net_los_ned(1)).norm();
-	const float launch_elevation = atan2f(-launch_axis_ned(2), launch_horizontal);
-	const float los_elevation = atan2f(-net_los_ned(2), los_horizontal);
-	const float elevation_difference = los_elevation - launch_elevation;
-	const float gain = math::constrain(_param_alpha_gain.get(), -10.f, 10.f);
-	const float max_correction = math::radians(math::constrain(fabsf(_param_alpha_max_deg.get()), 0.f, 60.f));
-	const float correction_angle = math::constrain(gain * elevation_difference, -max_correction, max_correction);
+	const float hover_thrust = net_release_hover_thrust();
+	const float configured_thrust_min = _param_mpc_thr_min.get();
+	const float thrust_min = PX4_ISFINITE(configured_thrust_min) ?
+				 math::constrain(configured_thrust_min, 0.f, 0.9f) : 0.1f;
+	const float configured_thrust_max = _param_mpc_thr_max.get();
+	const float thrust_max = PX4_ISFINITE(configured_thrust_max) ?
+				 math::constrain(configured_thrust_max, thrust_min + 0.05f, 1.f) : 1.f;
 
-	if (!PX4_ISFINITE(correction_angle)) {
-		return Vector3f{};
+	if (!_acceleration_sp.isAllFinite()) {
+		_net_release_thrust_saturated = true;
+		_net_release_thrust_sp = NAN;
+		return false;
 	}
 
-	Vector2f body_forward_xy(body_forward_ned(0), body_forward_ned(1));
-	const float body_forward_xy_norm = body_forward_xy.norm();
+	// Preserve the terminal-guidance thrust magnitude while the launch-axis
+	// attitude replaces the normal acceleration-derived thrust direction.
+	const Vector3f terminal_specific_force(_acceleration_sp(0), _acceleration_sp(1),
+					      _acceleration_sp(2) - CONSTANTS_ONE_G);
+	const float raw_terminal_thrust = hover_thrust * terminal_specific_force.norm() / CONSTANTS_ONE_G;
+	_net_release_thrust_sp = math::constrain(raw_terminal_thrust, thrust_min, thrust_max);
+	_net_release_thrust_saturated = raw_terminal_thrust < thrust_min || raw_terminal_thrust > thrust_max;
 
-	if (!PX4_ISFINITE(body_forward_xy_norm) || body_forward_xy_norm < 0.1f) {
-		return Vector3f{};
+	if (!PX4_ISFINITE(raw_terminal_thrust) || !PX4_ISFINITE(_net_release_thrust_sp)) {
+		_net_release_thrust_saturated = true;
+		_net_release_thrust_sp = NAN;
+		return false;
 	}
 
-	body_forward_xy *= 1.f / body_forward_xy_norm;
-	const float forward_accel = -CONSTANTS_ONE_G * tanf(correction_angle);
-	return Vector3f(body_forward_xy(0), body_forward_xy(1), 0.f) * forward_accel;
+	vehicle_attitude_setpoint_s setpoint{};
+	setpoint.timestamp = now;
+	attitude_sp.copyTo(setpoint.q_d);
+	setpoint.yaw_sp_move_rate = 0.f;
+	setpoint.thrust_body[0] = 0.f;
+	setpoint.thrust_body[1] = 0.f;
+	setpoint.thrust_body[2] = -_net_release_thrust_sp;
+	publish_offboard_attitude_mode();
+	_vehicle_attitude_setpoint_pub.publish(setpoint);
+	return true;
 }
 
 bool DytGuidance::update_laser_distance(hrt_abstime now)
@@ -3283,6 +3451,7 @@ void DytGuidance::clear_net_release_trigger()
 	_net_release_pitch_pending = false;
 	_net_release_manual_sequence = false;
 	_net_release_auto_timeout_blocked = false;
+	reset_net_release_attitude_control();
 	reset_net_release_fire_confirmation();
 	reset_image_net_estimate();
 }
@@ -3502,8 +3671,8 @@ void DytGuidance::start_net_decel_if_ready(hrt_abstime now, const Vector3f &vehi
 		return;
 	}
 
-	// The LOS alignment owns the attitude-action window. Automatic release ends
-	// it at the configured timeout or 50 ms after the PWM command, whichever is earlier.
+	// The LOS alignment owns the attitude-action window. Before release it ends at
+	// the configured timeout; after PWM it continues for the full 100 ms hold interval.
 	if (_net_release_pitch_until != 0 && now < _net_release_pitch_until) {
 		return;
 	}
@@ -3766,8 +3935,8 @@ bool DytGuidance::publish_terminal_loss_coast_setpoint()
 	return true;
 }
 
-void DytGuidance::publish_terminal_track_setpoint(const TrackProfile &profile, hrt_abstime now,
-		const Vector3f &vehicle_velocity)
+bool DytGuidance::publish_terminal_track_setpoint(const TrackProfile &profile, hrt_abstime now,
+		const Vector3f &vehicle_velocity, bool publish_setpoint)
 {
 	Vector2f horizontal_los(_los_ned(0), _los_ned(1));
 	float los_xy_norm = horizontal_los.norm();
@@ -3784,7 +3953,7 @@ void DytGuidance::publish_terminal_track_setpoint(const TrackProfile &profile, h
 		}
 
 		if (!horizontal_los.isAllFinite() || los_xy_norm < 1e-3f) {
-			return;
+			return false;
 		}
 	}
 
@@ -3802,8 +3971,7 @@ void DytGuidance::publish_terminal_track_setpoint(const TrackProfile &profile, h
 	Vector2f desired_speed_vector = horizontal_los * math::max(profile.v_cmd, 0.f);
 	apply_net_decel_velocity_scale(desired_speed_vector);
 	const float desired_speed = desired_speed_vector.norm();
-	const Vector3f additional_acceleration = net_release_pitch_accel_ned()
-					       + net_decel_accel_ned(now, vehicle_velocity);
+	const Vector3f additional_acceleration = net_decel_accel_ned(now, vehicle_velocity);
 	const auto output = DytTerminalVelocityGuidance::update(
 			    Vector2f(_velocity_sp(0), _velocity_sp(1)),
 			    Vector2f(vehicle_velocity(0), vehicle_velocity(1)),
@@ -3815,7 +3983,7 @@ void DytGuidance::publish_terminal_track_setpoint(const TrackProfile &profile, h
 
 	if (!output.velocity.isAllFinite() || !output.acceleration_limited.isAllFinite()) {
 		++_los_reject_count;
-		return;
+		return false;
 	}
 
 	_velocity_sp(0) = output.velocity(0);
@@ -3862,7 +4030,11 @@ void DytGuidance::publish_terminal_track_setpoint(const TrackProfile &profile, h
 
 	setpoint.yaw = _yaw_sp;
 	setpoint.yawspeed = _yaw_rate_sp;
-	_trajectory_setpoint_pub.publish(setpoint);
+	if (publish_setpoint) {
+		_trajectory_setpoint_pub.publish(setpoint);
+	}
+
+	return true;
 }
 
 void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
@@ -3873,20 +4045,38 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 
 	const hrt_abstime now = hrt_absolute_time();
 	const bool net_capture_aircraft = effective_vehicle_type() == dyt_guidance_status_s::VEHICLE_TYPE_NET_CAPTURE;
+	const bool attitude_action_active_at_entry = net_capture_aircraft && _net_release_attitude_control_active
+						     && _net_release_pitch_until != 0 && now < _net_release_pitch_until;
 
-	// Continue servicing the release timer after the gripper command has been
-	// sent so the final 50 ms attitude interval completes before braking starts.
-	if (net_capture_aircraft && (!_net_release_sent || _net_release_pitch_until != 0)) {
+	// Start a new action or service an expired action here. An action that was
+	// already active is serviced after the current terminal-guidance update so
+	// its angle gate and thrust both use this cycle's data.
+	if (net_capture_aircraft && !attitude_action_active_at_entry
+	    && (!_net_release_sent || _net_release_pitch_until != 0)) {
 		update_net_release_trigger(now);
 	}
 
-	if (!update_los_estimate(now)) {
+	const bool attitude_action_active = net_capture_aircraft && _net_release_attitude_control_active
+					    && _net_release_pitch_until != 0 && now < _net_release_pitch_until;
+	const bool los_updated = update_los_estimate(now);
+
+	if (!los_updated && !attitude_action_active) {
 		_attitude_diag_timestamp = 0;
+		publish_offboard_mode(true);
 		publish_hold_setpoint();
 		return;
 	}
 
-	update_attitude_diagnostic(now);
+	if (los_updated) {
+		update_attitude_diagnostic(now);
+
+	} else {
+		_attitude_diag_timestamp = 0;
+	}
+
+	if (!attitude_action_active) {
+		publish_offboard_mode(false);
+	}
 
 	Vector3f vehicle_velocity(_vehicle_local_position.vx, _vehicle_local_position.vy, _vehicle_local_position.vz);
 
@@ -3897,7 +4087,28 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 	start_net_decel_if_ready(now, vehicle_velocity);
 
 	if (new_terminal_guidance_enabled()) {
-		publish_terminal_track_setpoint(profile, now, vehicle_velocity);
+		const bool guidance_valid = publish_terminal_track_setpoint(profile, now, vehicle_velocity,
+					    !attitude_action_active);
+
+		if (!attitude_action_active) {
+			return;
+		}
+
+		if (guidance_valid && publish_net_release_attitude_setpoint(now)) {
+			update_net_release_trigger(now);
+			return;
+		}
+
+		const bool automatic_sequence = !_net_release_manual_sequence;
+		clear_net_release_trigger();
+		_net_release_auto_timeout_blocked = automatic_sequence;
+
+		if (automatic_sequence) {
+			start_net_timeout_recovery(now);
+		}
+
+		publish_offboard_mode(true);
+		publish_hold_setpoint();
 		return;
 	}
 
@@ -4036,7 +4247,6 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 	los_acc(1) *= xy_guard_scale;
 
 	_acceleration_sp = pn_acc + los_acc + damp_acc;
-	_acceleration_sp += net_release_pitch_accel_ned();
 	_acceleration_sp += net_decel_accel_ned(now, vehicle_velocity);
 
 	Vector2f acc_xy(_acceleration_sp(0), _acceleration_sp(1));
@@ -4075,7 +4285,26 @@ void DytGuidance::publish_track_setpoint(const TrackProfile &profile)
 	setpoint.yaw = _yaw_sp;
 	setpoint.yawspeed = _yaw_rate_sp;
 
-	_trajectory_setpoint_pub.publish(setpoint);
+	if (!attitude_action_active) {
+		_trajectory_setpoint_pub.publish(setpoint);
+		return;
+	}
+
+	if (publish_net_release_attitude_setpoint(now)) {
+		update_net_release_trigger(now);
+		return;
+	}
+
+	const bool automatic_sequence = !_net_release_manual_sequence;
+	clear_net_release_trigger();
+	_net_release_auto_timeout_blocked = automatic_sequence;
+
+	if (automatic_sequence) {
+		start_net_timeout_recovery(now);
+	}
+
+	publish_offboard_mode(true);
+	publish_hold_setpoint();
 }
 
 void DytGuidance::publish_offboard_mode(bool position_mode)
@@ -5927,13 +6156,11 @@ void DytGuidance::Run()
 
 	if (_state == TaskState::TrackFollow) {
 		request_offboard_mode();
-		publish_offboard_mode(false);
 		publish_track_setpoint(follow_profile());
 	}
 
 	if (_state == TaskState::TrackIntercept) {
 		request_offboard_mode();
-		publish_offboard_mode(false);
 		publish_track_setpoint(intercept_profile());
 	}
 

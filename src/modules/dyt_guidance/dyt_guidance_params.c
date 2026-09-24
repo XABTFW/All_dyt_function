@@ -696,12 +696,13 @@ PARAM_DEFINE_FLOAT(DYTG_RNG_MAX, 0.f);
 /**
  * Net release pitch action duration
  *
- * Maximum duration of the line-of-sight alignment action after the manual or
- * fused-distance trigger. Automatic release ends this action at the configured
- * timeout or 50 ms after the gripper PWM command, whichever is earlier. During
- * the action the attitude correction is recomputed every control cycle. Set to
- * 0 to disable the attitude action; automatic release then uses only the final
- * fused-distance threshold.
+ * Maximum pre-release duration of direct attitude control after the manual or
+ * fused-distance trigger. During this interval the body -Z launch axis is commanded
+ * toward the current target line of sight, while collective thrust continues to
+ * follow the terminal-guidance acceleration solution. If PWM is sent before this
+ * timeout, direct attitude control continues for a full 100 ms from the PWM time,
+ * even when that extends beyond this duration. Set to 0 to disable direct attitude
+ * control and use only the distance trigger.
  *
  * @unit ms
  * @min 0
@@ -711,12 +712,10 @@ PARAM_DEFINE_FLOAT(DYTG_RNG_MAX, 0.f);
 PARAM_DEFINE_INT32(DYTG_SZ_MS, 500);
 
 /**
- * Adaptive net release pitch gain
+ * Legacy net release pitch gain
  *
- * Gain applied to target line-of-sight elevation minus body -Z launch-axis
- * elevation. The net-capture calculation intentionally excludes DYTG_POFF and
- * DYTG_YOFF, while retaining the configured gimbal-to-body mount rotation. A
- * negative value reverses the correction direction.
+ * Retained for parameter compatibility. Direct net-release attitude control no
+ * longer uses this gain.
  *
  * @min -10.0
  * @max 10.0
@@ -726,10 +725,10 @@ PARAM_DEFINE_INT32(DYTG_SZ_MS, 500);
 PARAM_DEFINE_FLOAT(DYTG_ALP_K, 1.0f);
 
 /**
- * Maximum net release pitch correction
+ * Legacy maximum net release pitch correction
  *
- * Limits the equivalent nose-up or nose-down correction generated before the
- * gripper PWM release. The absolute value is used as the limit.
+ * Retained for parameter compatibility. Direct net-release attitude control uses
+ * DYTG_NET_TILT as its attitude limit.
  *
  * @unit deg
  * @min 0.0
@@ -794,7 +793,7 @@ PARAM_DEFINE_INT32(DYTG_FIRE_BTN, -1);
  * it. During laser dropouts the calibrated image estimate is used. Attitude
  * alignment starts when fused range is less than fused closing speed * 0.3 s
  * + DYTG_FIRE_D. The gripper PWM is sent when fused range is less than fused
- * closing speed * 0.05 s + DYTG_FIRE_D. The area fit remains
+ * closing speed * 0.07 s + DYTG_FIRE_D. The area fit remains
  * diagnostic only.
  *
  * @boolean
@@ -815,11 +814,27 @@ PARAM_DEFINE_INT32(DYTG_FIRE_EN, 1);
 PARAM_DEFINE_INT32(DYTG_FUS_EN, 1);
 
 /**
+ * Image distance scale
+ *
+ * Multiplies both area-based and long-side image distance estimates before
+ * validity checks, filtering, closing-speed estimation, laser fusion and net
+ * release decisions. Set to 0.5 when the uncorrected image distance is about
+ * twice the reference distance. A value of 1.0 leaves the original image
+ * distance calculation unchanged.
+ *
+ * @min 0.1
+ * @max 5.0
+ * @decimal 3
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_IMG_SCALE, 1.0f);
+
+/**
  * Net release base trigger distance
  *
  * Base distance added to the fused closing-speed lookaheads. Attitude alignment
  * starts at fused closing speed * 0.3 s plus DYTG_FIRE_D, and the gripper PWM is
- * sent at fused closing speed * 0.05 s plus DYTG_FIRE_D.
+ * sent at fused closing speed * 0.07 s plus DYTG_FIRE_D.
  *
  * @unit m
  * @min 0.1
@@ -828,6 +843,39 @@ PARAM_DEFINE_INT32(DYTG_FUS_EN, 1);
  * @group DYT Guidance
  */
 PARAM_DEFINE_FLOAT(DYTG_FIRE_D, 2.0f);
+
+/**
+ * Net release maximum alignment error
+ *
+ * Maximum angle between the body -Z launch axis and the current target line of
+ * sight for automatic gripper PWM release. The distance and angle conditions
+ * must be satisfied by two consecutive target frames. Manual release and the
+ * distance-only mode selected by DYTG_SZ_MS=0 bypass this threshold.
+ *
+ * @unit deg
+ * @min 0.1
+ * @max 90.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_FIRE_ANG, 10.0f);
+
+/**
+ * Net release attitude maximum tilt
+ *
+ * Maximum total body tilt used only during direct net-release attitude control.
+ * It does not change MPC_TILTMAX_AIR or the tilt limit used during normal flight.
+ * The desired body -Z launch axis is clipped to this tilt before the attitude
+ * quaternion is generated. Automatic release still uses the measured alignment
+ * error and DYTG_FIRE_ANG as the PWM gate.
+ *
+ * @unit deg
+ * @min 5.0
+ * @max 85.0
+ * @decimal 1
+ * @group DYT Guidance
+ */
+PARAM_DEFINE_FLOAT(DYTG_NET_TILT, 85.0f);
 
 /**
  * Enable net release hold
