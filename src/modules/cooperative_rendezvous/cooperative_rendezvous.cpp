@@ -652,7 +652,8 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 
 	const float target_altitude_amsl = static_cast<float>(_target_info.alt);
 	const float target_z = static_cast<float>(local_pos.ref_alt) - target_altitude_amsl;
-	const float vertical_offset = _options.target_offset(2) - _param_alt_diff.get();
+	const bool external_history_point = _target_info.source == follower_info_s::SOURCE_SETPOINT;
+	const float vertical_offset = external_history_point ? 0.f : _options.target_offset(2) - _param_alt_diff.get();
 	const float vertical_setpoint_error = fabsf(target_z + vertical_offset - local_pos.z);
 	const float configured_max_altitude_error = _param_max_altitude_error.get();
 	const float max_altitude_error = PX4_ISFINITE(configured_max_altitude_error) ?
@@ -697,6 +698,10 @@ bool CooperativeRendezvous::target_state_local(const vehicle_local_position_s &l
 		if (PX4_ISFINITE(target_distance) && target_distance >= 0.f) {
 			forward_offset = -target_distance;
 		}
+	}
+
+	if (external_history_point) {
+		forward_offset = 0.f;
 	}
 
 	// The LOS-relative waypoint has a stable equilibrium only behind the target with no lateral offset.
