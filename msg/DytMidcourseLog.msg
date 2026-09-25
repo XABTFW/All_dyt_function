@@ -1,6 +1,9 @@
 uint64 timestamp
 uint64 target_timestamp
+uint64 source_time_usec
 uint64 command_timestamp
+
+uint8 TARGET_SOURCE_DYT_POINTING_TARGET = 4
 
 uint32 target_id
 uint8 target_source

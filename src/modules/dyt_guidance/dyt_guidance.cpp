@@ -26,6 +26,7 @@
 #include <uORB/topics/dyt_guidance_command.h>
 #include <uORB/topics/dyt_guidance_status.h>
 #include <uORB/topics/dyt_midcourse_log.h>
+#include <uORB/topics/dyt_pointing_target.h>
 #include <uORB/topics/dyt_target.h>
 #include <uORB/topics/dyt_terminal_guidance_status.h>
 #include <uORB/topics/follower_info.h>
@@ -334,6 +335,7 @@ private:
 	float midcourse_target_relative_alt() const;
 	float own_midcourse_relative_alt() const;
 	bool midcourse_target_position_local(Vector3f &target_position) const;
+	bool pointing_target_position_local(Vector3f &target_position) const;
 	bool compute_midcourse_gimbal_angle(float &yaw_deg, float &pitch_deg) const;
 	bool compute_midcourse_inertial_angles(const Vector3f &los_ned, float &yaw_deg, float &pitch_deg) const;
 	Vector3f rotate_mount_los_to_body(const Vector3f &los_mount) const;
@@ -365,6 +367,7 @@ private:
 	bool _manual_activation{false};
 	bool _payload_lock_seen{false};
 	bool _payload_lost_hold{false};
+	bool _pointing_recovery_active{false};
 	bool _midcourse_handoff_latched{false};
 	uint8_t _automatic_initial_nav_intention{UINT8_MAX};
 	ScanRegion _scan_region{ScanRegion::Center};
@@ -524,6 +527,7 @@ private:
 
 	dyt_target_s _last_target{};
 	bool _have_target{false};
+	dyt_pointing_target_s _pointing_target{};
 	follower_info_s _midcourse_target_info{};
 	hrt_abstime _last_midcourse_target_time{0};
 	float _midcourse_target_alt_ref_m{NAN};
@@ -605,6 +609,7 @@ private:
 	uORB::Subscription _comm_emergency_status_sub{ORB_ID(comm_emergency_status)};
 	uORB::Subscription _geofence_result_sub{ORB_ID(geofence_result)};
 	uORB::SubscriptionMultiArray<distance_sensor_s> _distance_sensor_subs{ORB_ID::distance_sensor};
+	uORB::Subscription _dyt_pointing_target_sub{ORB_ID(dyt_pointing_target)};
 	uORB::Subscription _follower_info_sub{ORB_ID(follower_info)};
 	uORB::Subscription _gripper_sub{ORB_ID(gripper)};
 	uORB::Subscription _home_position_sub{ORB_ID(home_position)};
@@ -790,16 +795,16 @@ void DytGuidance::show_status()
 	PX4_INFO("handoff: coop_en=%ld geo_en=%ld active=%d controlling_vehicle=%d",
 		 static_cast<long>(_param_coop_enable.get()),
 		 static_cast<long>(_param_midcourse_geo_enable.get()), midcourse_handoff_active(), vehicle_control_active());
-	PX4_INFO("midcourse target: id=%lu age=%.3f yaw=%.1f pitch=%.1f burst=%d",
-		 static_cast<unsigned long>(_midcourse_target_info.mavid),
-		 static_cast<double>(_last_midcourse_target_time > 0 ?
-				     (hrt_absolute_time() - _last_midcourse_target_time) * 1e-6f : -1.f),
+	PX4_INFO("pointing target: source_time_us=%llu age=%.3f yaw=%.1f pitch=%.1f burst=%d",
+		 static_cast<unsigned long long>(_pointing_target.time_usec),
+		 static_cast<double>(_pointing_target.timestamp > 0 ?
+				     (hrt_absolute_time() - _pointing_target.timestamp) * 1e-6f : -1.f),
 		 static_cast<double>(_midcourse_yaw_deg),
 		 static_cast<double>(_midcourse_pitch_deg),
 		 _midcourse_burst_remaining);
 	Vector3f midcourse_target_position{};
 
-	if (midcourse_target_position_local(midcourse_target_position)) {
+	if (pointing_target_position_local(midcourse_target_position)) {
 		const Vector3f own_position(_vehicle_local_position.x, _vehicle_local_position.y, _vehicle_local_position.z);
 		const Vector3f los_ned = midcourse_target_position - own_position;
 		const float horizontal_distance = sqrtf(los_ned(0) * los_ned(0) + los_ned(1) * los_ned(1));
@@ -820,19 +825,13 @@ void DytGuidance::show_status()
 	}
 
 	if (global_position_valid() && midcourse_target_geo_valid()) {
-		const float target_command_alt = midcourse_target_command_alt();
-		const float target_rel_alt = midcourse_target_relative_alt();
-		const float own_rel_alt = own_midcourse_relative_alt();
-		PX4_INFO("midcourse altitude: mode=%ld own_msl=%.1f m own_rel=%.1f m target_raw=%.1f m target_rel=%.1f m ref=%.1f m target_cmd=%.1f m off=%.1f m delta_cmd=%.1f m",
-			 static_cast<long>(_param_midcourse_alt_mode.get()),
-			 static_cast<double>(_vehicle_global_position.alt),
-			 static_cast<double>(own_rel_alt),
-			 static_cast<double>(_midcourse_target_info.alt),
-			 static_cast<double>(target_rel_alt),
-			 static_cast<double>(_midcourse_target_alt_ref_m),
-			 static_cast<double>(target_command_alt),
-			 static_cast<double>(_param_midcourse_target_alt_offset.get()),
-			 static_cast<double>(target_command_alt - _vehicle_global_position.alt));
+		const float offset = PX4_ISFINITE(_param_midcourse_target_alt_offset.get()) ?
+				     _param_midcourse_target_alt_offset.get() : 0.f;
+		const float command_alt = _pointing_target.alt + offset;
+		PX4_INFO("pointing altitude: target_amsl=%.1f m command_amsl=%.1f m own_amsl=%.1f m",
+			 static_cast<double>(_pointing_target.alt),
+			 static_cast<double>(command_alt),
+			 static_cast<double>(_vehicle_global_position.alt));
 	}
 
 	PX4_INFO("midcourse geotrack: active=%d ownship_age=%.3f target_tx_age=%.3f",
@@ -1383,6 +1382,19 @@ void DytGuidance::update_subscriptions()
 		_sdm50_status = sdm50_status;
 	}
 
+	dyt_pointing_target_s pointing_target{};
+
+	while (_dyt_pointing_target_sub.update(&pointing_target)) {
+		const hrt_abstime now = hrt_absolute_time();
+		const float timeout_s = math::constrain(_param_midcourse_target_timeout.get(), 0.1f, 30.f);
+		const bool previous_fresh = _pointing_target.timestamp != 0 && _pointing_target.timestamp <= now &&
+					   now - _pointing_target.timestamp <= static_cast<hrt_abstime>(timeout_s * 1_s);
+
+		if (!previous_fresh || pointing_target.time_usec > _pointing_target.time_usec) {
+			_pointing_target = pointing_target;
+		}
+	}
+
 	follower_info_s info{};
 
 	while (_follower_info_sub.update(&info)) {
@@ -1724,6 +1736,12 @@ bool DytGuidance::midcourse_pointing_requested() const
 
 	if (_midcourse_operator_exit_blocked) {
 		return false;
+	}
+
+	// A lost visual lock may leave the GCS phase at TERMINAL. Restore only
+	// payload pointing; do not change the aircraft's phase or follower target.
+	if (_pointing_recovery_active) {
+		return true;
 	}
 
 	if (_gcs_phase_request == dyt_guidance_command_s::PHASE_MIDCOURSE) {
@@ -4402,28 +4420,26 @@ void DytGuidance::publish_status()
 	status.midcourse_target_valid = cooperative_status_fresh() && _cooperative_status.target_valid;
 	dyt_midcourse_log_s midcourse_log{};
 	midcourse_log.timestamp = now;
-	midcourse_log.target_timestamp = _midcourse_target_info.timestamp;
+	midcourse_log.target_timestamp = _pointing_target.timestamp;
+	midcourse_log.source_time_usec = _pointing_target.time_usec;
 	midcourse_log.command_timestamp = _last_midcourse_point_time;
-	midcourse_log.target_id = _midcourse_target_info.mavid;
-	midcourse_log.target_source = _midcourse_target_info.source;
+	midcourse_log.target_id = 0;
+	midcourse_log.target_source = dyt_midcourse_log_s::TARGET_SOURCE_DYT_POINTING_TARGET;
 	midcourse_log.gps_valid = midcourse_target_geo_valid();
-	midcourse_log.target_age_s = _last_midcourse_target_time != 0 && now >= _last_midcourse_target_time ?
-				     (now - _last_midcourse_target_time) * 1e-6f : NAN;
-	midcourse_log.target_lat_deg = _last_midcourse_target_time != 0 ?
-				       _midcourse_target_info.lat : static_cast<double>(NAN);
-	midcourse_log.target_lon_deg = _last_midcourse_target_time != 0 ?
-				       _midcourse_target_info.lon : static_cast<double>(NAN);
-	midcourse_log.target_alt_m = _last_midcourse_target_time != 0 ?
-				      _midcourse_target_info.alt : static_cast<double>(NAN);
-	midcourse_log.target_velocity_ned_m_s[0] = _last_midcourse_target_time != 0 ?
-						    static_cast<float>(_midcourse_target_info.vx) : NAN;
-	midcourse_log.target_velocity_ned_m_s[1] = _last_midcourse_target_time != 0 ?
-						    static_cast<float>(_midcourse_target_info.vy) : NAN;
-	midcourse_log.target_velocity_ned_m_s[2] = _last_midcourse_target_time != 0 ?
-						    static_cast<float>(_midcourse_target_info.vz) : NAN;
+	midcourse_log.target_age_s = _pointing_target.timestamp != 0 && now >= _pointing_target.timestamp ?
+				     (now - _pointing_target.timestamp) * 1e-6f : NAN;
+	midcourse_log.target_lat_deg = _pointing_target.timestamp != 0 ?
+				       _pointing_target.lat : static_cast<double>(NAN);
+	midcourse_log.target_lon_deg = _pointing_target.timestamp != 0 ?
+				       _pointing_target.lon : static_cast<double>(NAN);
+	midcourse_log.target_alt_m = _pointing_target.timestamp != 0 ?
+				      static_cast<double>(_pointing_target.alt) : static_cast<double>(NAN);
+	midcourse_log.target_velocity_ned_m_s[0] = NAN;
+	midcourse_log.target_velocity_ned_m_s[1] = NAN;
+	midcourse_log.target_velocity_ned_m_s[2] = NAN;
 	Vector3f midcourse_target_position{};
 
-	if (midcourse_target_position_local(midcourse_target_position)) {
+	if (pointing_target_position_local(midcourse_target_position)) {
 		const Vector3f own_position(_vehicle_local_position.x, _vehicle_local_position.y, _vehicle_local_position.z);
 		const Vector3f midcourse_los_ned = midcourse_target_position - own_position;
 		midcourse_target_position.copyTo(midcourse_log.target_position_ned_m);
@@ -4700,6 +4716,7 @@ void DytGuidance::enter_state(TaskState new_state, uint8_t lost_reason)
 		clear_net_hold();
 		clear_net_decel();
 	} else if (new_state == TaskState::TrackFollow || new_state == TaskState::TrackIntercept) {
+		_pointing_recovery_active = false;
 		_loss_coast_active = false;
 		_loss_coast_update_time = 0;
 		send_dyt_geo_track_exit();
@@ -4845,6 +4862,7 @@ void DytGuidance::deactivate_guidance_keep_tracking(uint8_t lost_reason)
 	if (_state != TaskState::Idle) {
 		enter_state(TaskState::Abort, lost_reason);
 	}
+	_pointing_recovery_active = false;
 }
 
 void DytGuidance::deactivate_guidance(uint8_t lost_reason)
@@ -4864,11 +4882,13 @@ void DytGuidance::deactivate_guidance(uint8_t lost_reason)
 	if (_state != TaskState::Idle) {
 		enter_state(TaskState::Abort, lost_reason);
 	}
+	_pointing_recovery_active = false;
 }
 
 void DytGuidance::abort_guidance(uint8_t lost_reason)
 {
 	reset_automatic_session();
+	_pointing_recovery_active = false;
 	send_dyt_geo_track_exit();
 	send_dyt_command(dyt_command_s::CMD_STOP_TRACK);
 	enter_state(TaskState::Abort, lost_reason);
@@ -4903,8 +4923,16 @@ void DytGuidance::handle_tracking_loss(uint8_t lost_reason)
 		_automatic_rearm_blocked = false;
 		_automatic_operator_exit_blocked = false;
 		deactivate_guidance(lost_reason);
+		_pointing_recovery_active = true;
 		send_dyt_command(dyt_command_s::CMD_DETECTION_START);
 		return;
+	}
+
+	// The last LOCKED report can remain cached after video data goes stale.
+	// Explicitly leave visual tracking before resuming geographic pointing.
+	if (!_pointing_recovery_active) {
+		send_dyt_command(dyt_command_s::CMD_STOP_TRACK);
+		_pointing_recovery_active = true;
 	}
 
 	enter_lost_hold(lost_reason);
@@ -5042,16 +5070,13 @@ void DytGuidance::send_dyt_geo_track_target(hrt_abstime now, bool force)
 	dyt_command_s msg{};
 	msg.timestamp = now;
 	msg.command = dyt_command_s::CMD_GEO_TRACK;
-	msg.lat = _midcourse_target_info.lat;
-	msg.lon = _midcourse_target_info.lon;
-	const float target_command_alt = midcourse_target_command_alt();
-
-	if (!PX4_ISFINITE(target_command_alt)) {
-		return;
-	}
-
-	msg.alt = target_command_alt;
-	msg.rel_alt = midcourse_target_relative_alt();
+	msg.lat = _pointing_target.lat;
+	msg.lon = _pointing_target.lon;
+	const float offset = PX4_ISFINITE(_param_midcourse_target_alt_offset.get()) ?
+			     _param_midcourse_target_alt_offset.get() : 0.f;
+	msg.alt = _pointing_target.alt + offset;
+	msg.rel_alt = PX4_ISFINITE(_vehicle_local_position.ref_alt) ?
+			   msg.alt - static_cast<float>(_vehicle_local_position.ref_alt) : NAN;
 	_dyt_command_pub.publish(msg);
 	_last_command = msg.command;
 	_last_command_time = now;
@@ -5111,16 +5136,18 @@ bool DytGuidance::local_position_global_valid() const
 
 bool DytGuidance::midcourse_target_geo_valid() const
 {
-	if (_last_midcourse_target_time == 0) {
+	const hrt_abstime now = hrt_absolute_time();
+
+	if (_pointing_target.timestamp == 0 || _pointing_target.timestamp > now) {
 		return false;
 	}
 
 	const float timeout_s = math::constrain(_param_midcourse_target_timeout.get(), 0.1f, 30.f);
 
-	return (hrt_absolute_time() - _last_midcourse_target_time) <= static_cast<hrt_abstime>(timeout_s * 1_s) &&
-	       PX4_ISFINITE(static_cast<float>(_midcourse_target_info.lat)) &&
-	       PX4_ISFINITE(static_cast<float>(_midcourse_target_info.lon)) &&
-	       PX4_ISFINITE(static_cast<float>(_midcourse_target_info.alt));
+	return now - _pointing_target.timestamp <= static_cast<hrt_abstime>(timeout_s * 1_s) &&
+	       PX4_ISFINITE(_pointing_target.lat) && _pointing_target.lat >= -90. && _pointing_target.lat <= 90. &&
+	       PX4_ISFINITE(_pointing_target.lon) && _pointing_target.lon >= -180. && _pointing_target.lon <= 180. &&
+	       PX4_ISFINITE(_pointing_target.alt);
 }
 
 float DytGuidance::midcourse_target_command_alt() const
@@ -5222,11 +5249,36 @@ bool DytGuidance::midcourse_target_position_local(Vector3f &target_position) con
 	return PX4_ISFINITE(target_position(2));
 }
 
+bool DytGuidance::pointing_target_position_local(Vector3f &target_position) const
+{
+	if (!local_position_global_valid() || !midcourse_target_geo_valid()) {
+		return false;
+	}
+
+	MapProjection map_ref{};
+	map_ref.initReference(_vehicle_local_position.ref_lat, _vehicle_local_position.ref_lon,
+			      _vehicle_local_position.ref_timestamp);
+
+	float x = NAN;
+	float y = NAN;
+	map_ref.project(_pointing_target.lat, _pointing_target.lon, x, y);
+	const float offset = PX4_ISFINITE(_param_midcourse_target_alt_offset.get()) ?
+			     _param_midcourse_target_alt_offset.get() : 0.f;
+	const float z = static_cast<float>(_vehicle_local_position.ref_alt) - (_pointing_target.alt + offset);
+
+	if (!PX4_ISFINITE(x) || !PX4_ISFINITE(y) || !PX4_ISFINITE(z)) {
+		return false;
+	}
+
+	target_position = Vector3f(x, y, z);
+	return true;
+}
+
 bool DytGuidance::compute_midcourse_gimbal_angle(float &yaw_deg, float &pitch_deg) const
 {
 	Vector3f target_position{};
 
-	if (!midcourse_target_position_local(target_position)) {
+	if (!pointing_target_position_local(target_position)) {
 		return false;
 	}
 
@@ -5235,21 +5287,10 @@ bool DytGuidance::compute_midcourse_gimbal_angle(float &yaw_deg, float &pitch_de
 	const float prediction_s = math::constrain(_param_midcourse_gimbal_prediction.get(), 0.f, 0.5f);
 
 	if (prediction_s > 0.f) {
-		const Vector3f target_velocity(static_cast<float>(_midcourse_target_info.vx),
-					       static_cast<float>(_midcourse_target_info.vy),
-					       static_cast<float>(_midcourse_target_info.vz));
 		const Vector3f own_velocity(_vehicle_local_position.vx, _vehicle_local_position.vy, _vehicle_local_position.vz);
-		const bool target_velocity_valid = PX4_ISFINITE(target_velocity(0)) && PX4_ISFINITE(target_velocity(1)) &&
-						   PX4_ISFINITE(target_velocity(2));
-		const bool own_velocity_valid = PX4_ISFINITE(own_velocity(0)) && PX4_ISFINITE(own_velocity(1)) &&
-						PX4_ISFINITE(own_velocity(2));
 
-		if (target_velocity_valid && own_velocity_valid) {
-			const float target_age_s = _last_midcourse_target_time != 0 ?
-						   math::constrain((hrt_absolute_time() - _last_midcourse_target_time) * 1e-6f, 0.f, 1.f) :
-						   0.f;
-
-			los_ned += target_velocity * (target_age_s + prediction_s) - own_velocity * prediction_s;
+		if (own_velocity.isAllFinite()) {
+			los_ned -= own_velocity * prediction_s;
 		}
 	}
 
@@ -5360,7 +5401,7 @@ bool DytGuidance::update_midcourse_pointing(hrt_abstime now, bool force)
 
 bool DytGuidance::update_midcourse_geo_tracking(hrt_abstime now, bool force)
 {
-	if (target_locked()) {
+	if (target_locked() && (target_fresh() || !_pointing_recovery_active)) {
 		// AUTO_LOCK already changed the payload out of geographic-follow mode. Clear
 		// local bookkeeping without sending an exit command that would cancel tracking.
 		_midcourse_geotrack_active = false;
@@ -5381,7 +5422,7 @@ bool DytGuidance::update_midcourse_geo_tracking(hrt_abstime now, bool force)
 
 bool DytGuidance::update_midcourse_gimbal_pointing(hrt_abstime now, bool force)
 {
-	if (target_locked()) {
+	if (target_locked() && (target_fresh() || !_pointing_recovery_active)) {
 		return false;
 	}
 
@@ -5824,6 +5865,7 @@ void DytGuidance::Run()
 	const hrt_abstime now = hrt_absolute_time();
 
 	if (_vehicle_status.arming_state != vehicle_status_s::ARMING_STATE_ARMED) {
+		_pointing_recovery_active = false;
 		_gcs_phase_request = 0;
 		_auto_midcourse_requested = false;
 		_midcourse_switch_latched = false;
@@ -6020,7 +6062,7 @@ void DytGuidance::Run()
 
 	switch (_state) {
 	case TaskState::Idle:
-		if (midcourse_pointing_request && !activation_request) {
+		if (midcourse_pointing_request && (!activation_request || _pointing_recovery_active)) {
 			// Midcourse-only operation: keep the payload geographically pointed
 			// while cooperative_rendezvous owns aircraft motion.
 			update_midcourse_pointing(now);
@@ -6111,7 +6153,10 @@ void DytGuidance::Run()
 
 			// 建议：DYTG_LOSTMS=0 时不要自动停止搜索
 			if (center_done && lost_timeout > 0 && (now - _state_enter_time) > center_delay + lost_timeout) {
+				// End aircraft guidance as before, but keep seeker-only pointing available.
+				const bool resume_pointing = _pointing_recovery_active;
 				abort_guidance(_lost_reason);
+				_pointing_recovery_active = resume_pointing;
 			} else if (center_done) {
 				// Search scan is disabled: use shared target position to point the seeker, then lock when visible.
 				if (!auto_activation_enabled && target_lock_candidate()) {

@@ -71,8 +71,7 @@ PARAM_DEFINE_INT32(DYTG_INT_AUX, 2);
  * aircraft motion to the cooperative_rendezvous position-sharing follower, so
  * the two controllers never publish setpoints at the same time. The
  * Cooperative Rendezvous activation switch also enables midcourse geographic
- * pointing, so the payload can look at the shared target before terminal
- * guidance is authorized.
+ * pointing from DYT_POINTING_TARGET before terminal guidance is authorized.
  *
  * Disable for standalone seeker operation (the seeker then holds position while
  * searching, as before).
@@ -85,11 +84,11 @@ PARAM_DEFINE_INT32(DYTG_COOP_EN, 1);
 /**
  * Midcourse geographic tracking enable
  *
- * When enabled, midcourse pointing uses the DYT payload geographic tracking
- * protocol with ownship state and target latitude/longitude/altitude packets.
- * Disable to compute a frame-angle command in PX4 from the shared target
- * position instead. Disabling avoids sending near-vertical ownship Euler
- * attitudes for upward-looking payload installations.
+ * When enabled, midcourse pointing sends ownship state and the
+ * DYT_POINTING_TARGET latitude/longitude/AMSL altitude to the payload.
+ * Disable to compute frame-angle commands in PX4 from the same target.
+ * Disabling avoids sending near-vertical ownship Euler attitudes for
+ * upward-looking payload installations.
  *
  * @boolean
  * @group DYT Guidance
@@ -97,10 +96,11 @@ PARAM_DEFINE_INT32(DYTG_COOP_EN, 1);
 PARAM_DEFINE_INT32(DYTG_GEO_EN, 1);
 
 /**
- * Midcourse target MAV_SYS_ID
+ * Cooperative handoff target MAV_SYS_ID
  *
- * Target aircraft ID used to point the seeker before visual lock. Set to 0 to
- * use the newest valid remote follower_info sample that is not this vehicle.
+ * Selects the follower_info aircraft used for the existing motion handoff
+ * bookkeeping. Seeker pointing uses DYT_POINTING_TARGET independently.
+ * Set to 0 to use the newest valid remote follower_info sample.
  *
  * @min 0
  * @max 255
@@ -109,10 +109,10 @@ PARAM_DEFINE_INT32(DYTG_GEO_EN, 1);
 PARAM_DEFINE_INT32(DYTG_TGT_ID, 1);
 
 /**
- * Midcourse target position timeout
+ * Midcourse pointing target timeout
  *
- * Maximum age of position-sharing target data used to point the seeker before
- * visual lock.
+ * Maximum age of the last received DYT_POINTING_TARGET used for seeker
+ * pointing before visual lock or after lock loss.
  *
  * @unit s
  * @min 0.1
@@ -123,13 +123,11 @@ PARAM_DEFINE_INT32(DYTG_TGT_ID, 1);
 PARAM_DEFINE_FLOAT(DYTG_TGT_TO, 2.0f);
 
 /**
- * Midcourse target altitude mode
+ * Legacy follower altitude mode
  *
- * Selects how follower_info.alt is interpreted for midcourse geographic
- * pointing. Mode 0 keeps the legacy AMSL behavior. Mode 1 estimates target
- * relative altitude from the target's lowest observed altitude in this boot,
- * unless the incoming altitude already looks relative. Mode 2 treats
- * follower_info.alt as relative altitude directly.
+ * Selects how follower_info.alt is interpreted for the existing cooperative
+ * handoff fallback. Does not affect seeker pointing: DYT_POINTING_TARGET.alt
+ * is always AMSL.
  *
  * @value 0 Legacy AMSL
  * @value 1 Relative reference
@@ -141,11 +139,9 @@ PARAM_DEFINE_FLOAT(DYTG_TGT_TO, 2.0f);
 PARAM_DEFINE_INT32(DYTG_ALT_MODE, 1);
 
 /**
- * Midcourse target altitude offset
+ * Midcourse pointing altitude offset
  *
- * Offset added to the midcourse target height before sending the geographic
- * target to the DYT seeker. In relative altitude modes this is added to the
- * target-relative-minus-own-relative height.
+ * Offset added to DYT_POINTING_TARGET.alt (AMSL) before directing the seeker.
  *
  * @unit m
  * @decimal 1
@@ -156,9 +152,10 @@ PARAM_DEFINE_FLOAT(DYTG_TGT_ALTOFF, 0.0f);
 /**
  * Midcourse gimbal prediction time
  *
- * Prediction time used when PX4 computes midcourse gimbal frame-angle commands
- * from ownship and target positions. This compensates seeker/gimbal response
- * delay by pointing at the predicted line of sight. Set to 0 to disable.
+ * Prediction time used when PX4 computes midcourse frame-angle commands.
+ * Only ownship velocity is available from DYT_POINTING_TARGET, so this
+ * compensates for ownship motion during seeker/gimbal response delay.
+ * Set to 0 to disable.
  *
  * @unit s
  * @min 0.0

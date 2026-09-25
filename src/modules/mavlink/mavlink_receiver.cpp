@@ -153,6 +153,10 @@ MavlinkReceiver::handle_message(mavlink_message_t *msg)
 		handle_message_swarm_start_flag(msg);
 		break;
 
+	case MAVLINK_MSG_ID_DYT_POINTING_TARGET:
+		handle_message_dyt_pointing_target(msg);
+		break;
+
 	case MAVLINK_MSG_ID_UAV_INFO:
 		handle_message_uav_info(msg);
 		break;
@@ -3623,6 +3627,26 @@ MavlinkReceiver::handle_message_swarm_start_flag(mavlink_message_t *msg){
 		_swarm_start_flag_pub.publish(_swarm_start_flag);
 		PX4_INFO("主机执行命令");
 	}
+}
+
+void
+MavlinkReceiver::handle_message_dyt_pointing_target(mavlink_message_t *msg)
+{
+	mavlink_dyt_pointing_target_t target{};
+	mavlink_msg_dyt_pointing_target_decode(msg, &target);
+
+	if (target.time_usec == 0 || target.lat_int < -900000000 || target.lat_int > 900000000
+	    || target.lon_int < -1800000000 || target.lon_int > 1800000000 || !PX4_ISFINITE(target.alt)) {
+		return;
+	}
+
+	dyt_pointing_target_s pointing_target{};
+	pointing_target.timestamp = hrt_absolute_time();
+	pointing_target.time_usec = target.time_usec;
+	pointing_target.lat = static_cast<double>(target.lat_int) * 1e-7;
+	pointing_target.lon = static_cast<double>(target.lon_int) * 1e-7;
+	pointing_target.alt = target.alt;
+	_dyt_pointing_target_pub.publish(pointing_target);
 }
 
 void

@@ -63,6 +63,7 @@ void LoggedTopics::add_default_topics()
 	add_optional_topic("dyt_command");
 	add_optional_topic("dyt_guidance_status", 20);
 	add_optional_topic("dyt_midcourse_log", 50);
+	add_optional_topic("dyt_pointing_target", 50);
 	add_optional_topic("dyt_target", 20);
 	add_optional_topic("dyt_terminal_guidance_status", 20);
 	add_topic_multi("dronecan_node_status", 250);

@@ -97,6 +97,10 @@ menu "Zenoh publishers/subscribers"
 		bool "collision_constraints"
 		default n
 
+	config ZENOH_PUBSUB_COMM_EMERGENCY_STATUS
+		bool "comm_emergency_status"
+		default n
+
 	config ZENOH_PUBSUB_CONFIG_OVERRIDES
 		bool "config_overrides"
 		default n
@@ -171,6 +175,10 @@ menu "Zenoh publishers/subscribers"
 
 	config ZENOH_PUBSUB_DYT_MIDCOURSE_LOG
 		bool "dyt_midcourse_log"
+		default n
+
+	config ZENOH_PUBSUB_DYT_POINTING_TARGET
+		bool "dyt_pointing_target"
 		default n
 
 	config ZENOH_PUBSUB_DYT_STATUS_REPLY
@@ -1046,6 +1054,7 @@ config ZENOH_PUBSUB_ALL_SELECTION
 	select ZENOH_PUBSUB_CAN_INTERFACE_STATUS
 	select ZENOH_PUBSUB_CELLULAR_STATUS
 	select ZENOH_PUBSUB_COLLISION_CONSTRAINTS
+	select ZENOH_PUBSUB_COMM_EMERGENCY_STATUS
 	select ZENOH_PUBSUB_CONFIG_OVERRIDES
 	select ZENOH_PUBSUB_CONTROL_ALLOCATOR_STATUS
 	select ZENOH_PUBSUB_COOPERATIVE_POSITION
@@ -1065,6 +1074,7 @@ config ZENOH_PUBSUB_ALL_SELECTION
 	select ZENOH_PUBSUB_DYT_GUIDANCE_COMMAND
 	select ZENOH_PUBSUB_DYT_GUIDANCE_STATUS
 	select ZENOH_PUBSUB_DYT_MIDCOURSE_LOG
+	select ZENOH_PUBSUB_DYT_POINTING_TARGET
 	select ZENOH_PUBSUB_DYT_STATUS_REPLY
 	select ZENOH_PUBSUB_DYT_TARGET
 	select ZENOH_PUBSUB_DYT_TERMINAL_GUIDANCE_STATUS

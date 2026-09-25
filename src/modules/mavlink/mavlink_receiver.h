@@ -71,6 +71,7 @@
 #include <uORB/topics/distance_sensor.h>
 #include <uORB/topics/dyt_command.h>
 #include <uORB/topics/dyt_guidance_command.h>
+#include <uORB/topics/dyt_pointing_target.h>
 #include <uORB/topics/follow_target.h>
 #include <uORB/topics/follower_info.h>
 #include <uORB/topics/gcs_trajectory_setpoint.h>
@@ -177,6 +178,7 @@ private:
 	void handle_message_distance_sensor(mavlink_message_t *msg);
 	void handle_message_follow_target(mavlink_message_t *msg);
 	void handle_message_swarm_start_flag(mavlink_message_t *msg);
+	void handle_message_dyt_pointing_target(mavlink_message_t *msg);
 	void handle_message_uav_info(mavlink_message_t *msg);
 	void handle_message_swarm_mission_item(mavlink_message_t *msg);
 	void handle_message_test_mavlink_rx(mavlink_message_t *msg);
@@ -315,6 +317,7 @@ private:
 
 	// ORB publications
 	uORB::Publication<uav_info_s> 			_uav_info_pub{ORB_ID(uav_info)};
+	uORB::Publication<dyt_pointing_target_s> 		_dyt_pointing_target_pub{ORB_ID(dyt_pointing_target)};
 	uORB::Publication<follower_info_s> 			_follower_info_pub{ORB_ID(follower_info)};
 	uORB::Publication<swarm_start_flag_s> 		_swarm_start_flag_pub{ORB_ID(swarm_start_flag)};
 	uORB::Publication<swarm_mission_item_s> 		_swarm_mission_item_pub{ORB_ID(swarm_mission_item)};

@@ -74,6 +74,7 @@ set(msg_files
 	DytGuidanceCommand.msg
 	DytGuidanceStatus.msg
 	DytMidcourseLog.msg
+	DytPointingTarget.msg
 	DytStatusReply.msg
 	DytTarget.msg
 	DytTerminalGuidanceStatus.msg
