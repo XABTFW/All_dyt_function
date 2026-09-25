@@ -3880,10 +3880,10 @@ void MavlinkReceiver::handle_message_dyt_track_point_command(mavlink_message_t *
 	if (valid_coordinates) {
 		const int32_t centered_x_px = static_cast<int32_t>(mavlink_command.x_px) -
 					      static_cast<int32_t>(mavlink_command.image_width_px) / 2;
-		// The payload tracking command uses right-positive azimuth and up-positive elevation.
-		// MAVLink coordinates are measured from the image's top-left corner, so invert Y.
-		const int32_t centered_y_px = static_cast<int32_t>(mavlink_command.image_height_px) / 2 -
-					      static_cast<int32_t>(mavlink_command.y_px);
+		// The payload tracking point uses right-positive X and down-positive Y.
+		// MAVLink coordinates are measured from the image's top-left corner.
+		const int32_t centered_y_px = static_cast<int32_t>(mavlink_command.y_px) -
+					      static_cast<int32_t>(mavlink_command.image_height_px) / 2;
 		dyt_command_s command{};
 		command.timestamp = hrt_absolute_time();
 		command.command = dyt_command_s::CMD_TRACK_POINT;
