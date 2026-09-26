@@ -16,9 +16,17 @@
 target_system=<飞控 sysid>
 target_component=1
 param_id="DYTG_MODE"
-param_value=0.0 / 1.0 / 2.0
+param_value=<整数 0 / 1 / 2 的 4 字节按位放入 float 字段；兼容直接赋值 0.0 / 1.0 / 2.0>
 param_type=MAV_PARAM_TYPE_INT32
 ```
+
+`DYTG_MODE` 是 `int32_t` 参数。使用 MAVLink `PARAM_SET` 时，飞控按字节读取
+`param_value`：例如半自动的整数 `1` 对应原始位 `0x00000001`。飞控现在也兼容
+直接写浮点 `1.0f`（原始位 `0x3F800000`），无论该包标记为 `INT32` 还是
+`REAL32`，只对 `DYTG_MODE` 的 `0/1/2` 生效。若 MAVLink 库提供整数参数编码接口，应交给库编码；手工组包时可用 `memcpy` 将
+`int32_t mode = 1` 的 4 字节复制到 `param_value`。发送后按同一规则解码
+`PARAM_VALUE` 回包，并确认 `DYT_SYSTEM_STATUS.control_mode=1`、
+`DYTG_AUTO_EN=0`。
 
 飞控参数定义位置：
 

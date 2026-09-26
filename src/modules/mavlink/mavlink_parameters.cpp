@@ -122,13 +122,35 @@ MavlinkParametersManager::handle_message(const mavlink_message_t *msg)
 
 				/* attempt to find parameter, set and send it */
 				param_t param = param_find_no_notification(name);
+				const bool dytg_mode = strcmp(name, "DYTG_MODE") == 0;
 
 				if (param == PARAM_INVALID) {
 					PX4_ERR("unknown param: %s", name);
 
 				} else if (!((param_type(param) == PARAM_TYPE_INT32 && set.param_type == MAV_PARAM_TYPE_INT32) ||
-					     (param_type(param) == PARAM_TYPE_FLOAT && set.param_type == MAV_PARAM_TYPE_REAL32))) {
+					     (param_type(param) == PARAM_TYPE_FLOAT && set.param_type == MAV_PARAM_TYPE_REAL32) ||
+					     (dytg_mode && param_type(param) == PARAM_TYPE_INT32 && set.param_type == MAV_PARAM_TYPE_REAL32))) {
 					PX4_ERR("param types mismatch param: %s", name);
+
+				} else if (dytg_mode) {
+					int32_t mode;
+					memcpy(&mode, &set.param_value, sizeof(mode));
+					bool valid_mode = set.param_type == MAV_PARAM_TYPE_INT32 && mode >= 0 && mode <= 2;
+
+					// Accept both MAVLink's integer byte encoding and float 0.0/1.0/2.0 bits from older GCS versions.
+					if (!valid_mode && (mode == 0 || mode == 0x3f800000 || mode == 0x40000000)) {
+						mode = mode == 0x3f800000 ? 1 : (mode == 0x40000000 ? 2 : 0);
+						valid_mode = true;
+					}
+
+					if (valid_mode) {
+						param_set(param, &mode);
+
+					} else {
+						PX4_ERR("invalid DYTG_MODE value");
+					}
+
+					send_param(param);
 
 				} else {
 					// According to the mavlink spec we should always acknowledge a write operation.

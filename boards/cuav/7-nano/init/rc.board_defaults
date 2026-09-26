@@ -57,7 +57,7 @@ param set-default DYTG_ALP_VMIN 1
 # 重新锁定前云台回中后的稳定等待时间，单位 ms。
 param set-default DYTG_CTRMS 400
 # 跟踪脱靶量从算法采样到飞控收包的延迟，单位 ms；厂家给出的最大值约为 30 ms。
-param set-default DYTG_DLY_MS 30
+param set-default DYTG_DLY_MS 16
 # 允许进入拦截状态的机头前向圆锥半角，单位度。
 param set-default DYTG_FCONE 40
 # 控制中途阶段是否使用导引头地理坐标跟踪协议。
@@ -89,11 +89,11 @@ param set-default DYTG_MAXACC 4
 # 允许使用的目标数据最大年龄，单位 s。
 param set-default DYTG_MAXAGE 0.5
 # 限制导引输出的最大垂直速度绝对值，单位 m/s。
-#param set-default DYTG_MAXDZ 6
+param set DYTG_MAXDZ 6
 # 允许的最大目标帧间隔或时间抖动，单位 s。
 param set-default DYTG_MAXJIT 0.300000012
 # 限制导引输出的最大水平速度，单位 m/s。
-param set-default DYTG_MAXV 47
+param set-default DYTG_MAXV 40
 # 限制导引期间的最大偏航角速度，单位 deg/s。
 param set-default DYTG_MAXYAWR 120
 # 启用云台安装姿态旋转补偿。
@@ -137,7 +137,7 @@ param set-default DYTG_SC_YSTP 10
 # 设置人工摇杆接管导引控制的输入阈值。
 param set-default DYTG_STK_TK 0.300000012
 # 设置人工触发网捕释放后的俯仰动作持续时间，单位 ms。
-param set-default DYTG_SZ_MS 300
+param set-default DYTG_SZ_MS 500
 # 设置中途制导目标高度的附加偏移，单位 m。
 param set-default DYTG_TGT_ALTOFF 0
 # 设置中途指向目标的 MAVLink 系统 ID。
@@ -147,7 +147,7 @@ param set-default DYTG_TGT_TO 10
 # 设置导引计算使用的最小闭合速度，单位 m/s。
 param set-default DYTG_VMIN 1
 # 设置跟随模式的指令速度，单位 m/s。
-param set-default DYTG_V_FOL 50
+param set-default DYTG_V_FOL 40
 # 设置拦截模式的指令速度，单位 m/s。
 param set-default DYTG_V_INT 6
 # 设置启动搜索后等待目标锁定的超时时间，单位 ms。
@@ -156,6 +156,7 @@ param set-default DYTG_WAITMS 2500
 param set-default DYTG_XYDB 0.119999997
 # 设置产生完整水平跟踪输出所需的 LOS 大小。
 param set-default DYTG_XYFULL 0.850000024
+param set CEM_WAIT 30
 # 启用水平越过目标保护。
 param set-default DYTG_XYOVR_EN 1
 # 设置越过保护激活时的最小水平控制缩放比例。
@@ -241,7 +242,8 @@ param set-default CRDZ_ACT_AUX -1
 param set-default CRDZ_ACT_BTN 0
 param set-default DYTG_ACT_BTN 2
 # 设置本机相对目标的期望高度差，正值表示本机在上方，单位 m。
-#param set-default CRDZ_ALT_DIFF 0
+param set-default CRDZ_ALT_DIFF -20
+param set-default CRDZ_FB_OFF -50
 # 设置接近目标相对位置时附加的水平闭合速度，单位 m/s。
 param set-default CRDZ_APP_SPD 4
 # 设置本机与目标保持的水平距离，单位 m。
@@ -261,6 +263,12 @@ param set-default CRDZ_HOLD_VEL 5
 # 设置判定进入到达保持的垂直半径，单位 m。
 param set-default CRDZ_HOLD_VRAD 1.5
 
+param set-default CRDZ_ALT_ERR 100
+
+param set-default CRDZ_MINH_EN 1
+
+param set-default CRDZ_LR_OFF 0
+param set-default CRDZ_TGT_TOUT 20
 # 设置接近目标时开始减速的水平半径，单位 m。
 param set-default CRDZ_SLOW_RAD 20
 # 限制目标位置数据允许的最大突跳距离，单位 m。
@@ -284,25 +292,43 @@ param set-default DYTG_FIRE_EN 1
 # 限制协同会合水平速度命令的变化率，单位 m/s²。
 param set-default CRDZ_VSLEW 3
 # 启用明确的目标 NED 水平位置偏移。
-#param set-default CRDZ_XY_OFF_EN 0
-# 设置目标相对位置的 NED X/北向偏移，单位 m。
-#param set-default CRDZ_X_OFF 30
-# 设置目标相对位置的 NED Y/东向偏移，单位 m。
-#param set-default CRDZ_Y_OFF 0
+param set CRDZ_XY_OFF_EN 1
+
 # 选择中途阶段使用的云台角度命令模式。
 param set-default DYTG_MNT_MODE 0
 
-
+param set-default DYTG_ACC_FF 0
+param set-default DYTG_ACC_JERK 4
+param set DYTG_FIRE_ANG 15
+param set DYTG_FIRE_BTN -1
+param set DYTG_FIRE_D 2.5
+param set-default DYTG_GD_LAW 0
+param set-default DYTG_GMB_DLY 0
+param set-default DYTG_HOLD_V 2
+param set-default DYTG_IMG_SCALE 0.5
+param set-default DYTG_LOCK_MS 2000
+param set-default DYTG_NET_MS 500
+param set-default DYTG_NET_SC 0.5
+param set-default DYTG_NET_TILT 85
+param set-default DYTG_PIT_MAX 40
+param set-default DYTG_PIT_MIN -90
+param set-default DYTG_PN_EN 0
+param set-default DYTG_RNG_MAX 0
+param set-default DYTG_RNG_MIN 0
+param set-default DYTG_SPD_SLEW 2
+param set-default DYTG_STOP_ACC 4
+param set-default DYTG_YAW_MAX 40
+param set-default DYTG_YAW_MIN -40
 
 param set-default DYTG_COOP_EN 1
 # 选择中途制导目标高度的解释方式。
 param set-default DYTG_ALT_MODE 1
-param set-default DYTG_AUTO_EN 0
-param set-default DYTG_MODE 0
+param set-default DYTG_AUTO_EN 1
+param set-default DYTG_MODE 2
 
 param set-default DYTG_ACT_AUX -1
 # 启用自定义通信紧急处置模块。
-param set-default CEM_EN 1
+param set CEM_EN 1
 # 选择通信丢失超时后的处置动作。
 param set-default CEM_TO_ACT 0
 
@@ -457,11 +483,11 @@ param set-default MPC_LAND_RADIUS 1000
 # 控制自动着陆过程中是否允许摇杆修正位置和航向。
 param set-default MPC_LAND_RC_HELP 0
 # 设置正常着陆下降速度，单位 m/s。
-param set-default MPC_LAND_SPEED 0.7
+param set-default MPC_LAND_SPEED 2
 # 设置 Stabilized 模式最低总推力。
 param set-default MPC_MANTHR_MIN 0.0799999982
 # 限制 Stabilized、Altitude 模式的人工最大倾角，单位度。
-param set-default MPC_MAN_TILT_MAX 60
+param set-default MPC_MAN_TILT_MAX 70
 # 限制人工控制的最大偏航角速度，单位 deg/s。
 param set-default MPC_MAN_Y_MAX 150
 # 设置人工偏航角速度输入滤波时间常数，单位 s。
@@ -493,7 +519,7 @@ param set-default MPC_VELD_LP 5
 # 设置速度信号低通滤波截止频率，单位 Hz；0 表示关闭。
 param set-default MPC_VEL_LP 0
 # 限制 Position 模式最大人工水平速度，单位 m/s。
-param set-default MPC_VEL_MANUAL 60
+param set-default MPC_VEL_MANUAL 40
 # 限制 Position 模式最大后退速度；负值表示使用人工总上限。
 param set-default MPC_VEL_MAN_BACK -1
 # 限制 Position 模式最大侧向速度；负值表示使用人工总上限。
@@ -519,7 +545,7 @@ param set-default MPC_XY_VEL_D_ACC 0.200000003
 # 设置水平速度环积分加速度增益。
 param set-default MPC_XY_VEL_I_ACC 0.5
 # 限制所有速度控制模式的最大水平速度，单位 m/s。
-param set-default MPC_XY_VEL_MAX 45
+param set-default MPC_XY_VEL_MAX 40
 # 设置水平速度环比例加速度增益。
 param set-default MPC_XY_VEL_P_ACC 2
 # 限制自动模式偏航设定值最大角加速度，单位 deg/s²。
@@ -529,7 +555,7 @@ param set-default MPC_YAWRAUTO_MAX 60
 # 旧版人工偏航摇杆 Expo 参数；当前源码已无此参数定义。
 param set-default MPC_YAW_EXPO 0.600000024
 # 选择自动模式中的航向控制策略。
-param set-default MPC_YAW_MODE 0
+param set-default MPC_YAW_MODE 3
 # 旧版人工垂直摇杆 Expo 参数；当前源码已无此参数定义。
 param set-default MPC_Z_MAN_EXPO 0.600000024
 # 设置垂直位置误差比例增益。
@@ -644,7 +670,9 @@ param set-default GF_ACTION 3
 
 #低电量返航
 param set-default CEM_BAT_THR 0.2
-
+param set COM_HOME_EN 1
+param set COM_HOME_IN_AIR 0
+param set-default COM_RC_IN_MODE 1
 # 设置 USB MAVLink 消息流模式；5 表示配置模式。
 param set-default USB_MAV_MODE 5
 
@@ -685,5 +713,8 @@ param set-default NAV_RCL_ACT 0
 param set-default COM_RCL_EXCEPT 7
 # 选择地面站数据链丢失后的原生失效保护动作；0 表示不执行动作。
 param set-default NAV_DLL_ACT 0
+
+#中制导最低高度限制
+param set-default CRDZ_MIN_HGT 100
 
 safety_button start
