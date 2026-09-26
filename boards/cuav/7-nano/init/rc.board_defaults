@@ -79,7 +79,7 @@ param set-default DYTG_KV_INT 1.20000005
 # 丢失目标后保持或搜索的总超时时间，单位 ms。
 param set-default DYTG_LOSTMS 240000
 # 目标视线 LOS 的低通滤波系数。
-param set-default DYTG_LPF_A 0.699999988
+param set-default DYTG_LPF_A 0.4
 # 设置导引头 LOS X 轴数据的符号方向。
 param set-default DYTG_LXSIGN 1
 # 设置导引头 LOS Y 轴数据的符号方向。
@@ -113,7 +113,7 @@ param set-default DYTG_N_INT 3.5
 # 设置导引头俯仰角零位偏移，单位度。
 param set-default DYTG_POFF 0
 # 限制目标 LOS 的最大预测时间，单位 s。
-param set-default DYTG_PREDMAX 0.0299999993
+param set-default DYTG_PREDMAX 0.04
 # 设置导引头俯仰角的符号方向。
 param set-default DYTG_PSIGN 1
 # 设置导引头滚转角零位偏移，单位度。
@@ -264,6 +264,8 @@ param set-default CRDZ_HOLD_VEL 5
 param set-default CRDZ_HOLD_VRAD 1.5
 
 param set-default CRDZ_ALT_ERR 100
+
+param set-default RTL_TYPE 3
 
 param set-default CRDZ_MINH_EN 1
 
