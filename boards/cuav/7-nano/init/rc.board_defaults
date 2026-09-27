@@ -485,7 +485,7 @@ param set-default MPC_LAND_RADIUS 1000
 # 控制自动着陆过程中是否允许摇杆修正位置和航向。
 param set-default MPC_LAND_RC_HELP 0
 # 设置正常着陆下降速度，单位 m/s。
-param set-default MPC_LAND_SPEED 2
+param set-default MPC_LAND_SPEED 0.7
 # 设置 Stabilized 模式最低总推力。
 param set-default MPC_MANTHR_MIN 0.0799999982
 # 限制 Stabilized、Altitude 模式的人工最大倾角，单位度。
