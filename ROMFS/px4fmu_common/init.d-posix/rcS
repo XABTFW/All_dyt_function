@@ -137,7 +137,8 @@ done
 
 # multi-instance setup
 # shellcheck disable=SC2154
-param set MAV_SYS_ID $((px4_instance+1))
+# Preserve an explicit system ID when model/instance numbering differs from vehicle identity.
+param set MAV_SYS_ID "${PX4_PARAM_MAV_SYS_ID:-$((px4_instance+1))}"
 param set UXRCE_DDS_KEY $((px4_instance+1))
 
 if [ $AUTOCNF = yes ]
@@ -372,4 +373,21 @@ fi
 . ${R}etc/init.d/rc.logging
 
 mavlink boot_complete
+
+# Cooperative guidance uses DYT status to process operator activation requests.
+if command -v cooperative_rendezvous > /dev/null 2>&1
+then
+	if command -v dyt_guidance > /dev/null 2>&1
+	then
+		dyt_guidance start
+	fi
+
+	if param compare MAV_SYS_ID 1
+	then
+		cooperative_rendezvous start -r broadcast
+	else
+		cooperative_rendezvous start -r rendezvous -t 1
+	fi
+fi
+
 replay trystart

@@ -50,6 +50,11 @@ bool GZGimbal::init(const std::string &world_name, const std::string &model_name
 	}
 
 	pthread_mutex_init(&_node_mutex, nullptr);
+	_image_owner_topic = "/model/" + model_name + "/dyt/gimbal_owner";
+
+	if (!_node.Subscribe(_image_owner_topic, &GZGimbal::imageOwnerCallback, this)) {
+		return false;
+	}
 
 	updateParameters();
 
@@ -73,7 +78,11 @@ void GZGimbal::Run()
 
 	updateParameters();
 
-	if (pollSetpoint()) {
+	const bool image_owner_active = _image_owner_time != 0 && now >= _image_owner_time
+					&& now - _image_owner_time < 500_ms;
+
+	// Consume PX4 inputs while the image controller owns the joints, avoiding stale replay.
+	if (pollSetpoint() && !image_owner_active) {
 		//TODO handle device flags
 		publishJointCommand(_gimbal_roll_cmd_publisher, _roll_stp, _roll_rate_stp, _last_roll_stp, _roll_min, _roll_max, dt);
 		publishJointCommand(_gimbal_pitch_cmd_publisher, _pitch_stp, _pitch_rate_stp, _last_pitch_stp, _pitch_min, _pitch_max,
@@ -93,6 +102,14 @@ void GZGimbal::Run()
 void GZGimbal::stop()
 {
 	ScheduleClear();
+	_node.Unsubscribe(_image_owner_topic);
+}
+
+void GZGimbal::imageOwnerCallback(const gz::msgs::Boolean &message)
+{
+	pthread_mutex_lock(&_node_mutex);
+	_image_owner_time = message.data() ? hrt_absolute_time() : 0;
+	pthread_mutex_unlock(&_node_mutex);
 }
 
 void GZGimbal::gimbalIMUCallback(const gz::msgs::IMU &IMU_data)

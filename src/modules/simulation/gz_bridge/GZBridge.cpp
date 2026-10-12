@@ -133,6 +133,14 @@ int GZBridge::init()
 	}
 
 	// ESC mixing interface
+	// Explicit external camera-reader opt-in, scoped to this simulated vehicle.
+	const std::string dyt_topic = "/model/" + _model_name + "/dyt/target";
+
+	if (!_node.Subscribe(dyt_topic, &GZBridge::dytTargetCallback, this)) {
+		PX4_ERR("failed to subscribe to %s", dyt_topic.c_str());
+		return PX4_ERROR;
+	}
+
 	if (!_mixing_interface_esc.init(_model_name)) {
 		PX4_ERR("failed to init ESC output");
 		return PX4_ERROR;
@@ -187,6 +195,70 @@ void GZBridge::Run()
 	}
 
 	ScheduleDelayed(10_ms);
+}
+
+void GZBridge::dytTargetCallback(const gz::msgs::Float_V &msg)
+{
+	// v1: version, valid, LOS right/down, camera RPY in body FRD, bbox W/H, pixel miss X/Y, frame dt.
+	if (msg.data_size() != 12 || fabsf(msg.data(0) - 1.f) > FLT_EPSILON || !msg.has_header() || !msg.header().has_stamp()) {
+		return;
+	}
+
+	for (int i = 0; i < msg.data_size(); ++i) {
+		if (!PX4_ISFINITE(msg.data(i))) {
+			return;
+		}
+	}
+
+	const auto &stamp = msg.header().stamp();
+
+	if (stamp.sec() < 0 || stamp.nsec() < 0 || stamp.nsec() >= 1000000000 || stamp.sec() > INT32_MAX) {
+		return;
+	}
+
+	const uint64_t sample = static_cast<uint64_t>(stamp.sec()) * 1000000ULL + stamp.nsec() / 1000;
+	const hrt_abstime now = hrt_absolute_time();
+
+	if (sample == 0 || sample > now || now - sample > 500000 ||
+	    (fabsf(msg.data(1)) > FLT_EPSILON && fabsf(msg.data(1) - 1.f) > FLT_EPSILON) ||
+	    fabsf(msg.data(2)) >= M_PI_2_F || fabsf(msg.data(3)) >= M_PI_2_F ||
+	    fabsf(msg.data(4)) > M_PI_F || fabsf(msg.data(5)) > M_PI_2_F || fabsf(msg.data(6)) > M_PI_F ||
+	    msg.data(7) < 0.f || msg.data(8) < 0.f || msg.data(7) > 32767.f || msg.data(8) > 32767.f ||
+	    fabsf(msg.data(9)) > 32767.f || fabsf(msg.data(10)) > 32767.f ||
+	    msg.data(11) < 0.f || msg.data(11) > 10.f ||
+	    (msg.data(1) > 0.5f && (msg.data(7) < 4.f || msg.data(8) < 4.f))) {
+		return;
+	}
+
+	dyt_target_s target{};
+	target.timestamp = now;
+	target.timestamp_sample = sample;
+	target.frame_counter = static_cast<uint32_t>(sample);
+	target.target_valid = msg.data(1) > 0.5f;
+	target.auto_hint = target.target_valid;
+	target.status1 = target.target_valid ? 100 : 0;
+	target.servo_mode = target.target_valid ? 0x06 : 0x00; // DYT track / disabled.
+	target.tracking_state = target.target_valid ? dyt_target_s::TRACKING_STATE_LOCKED : dyt_target_s::TRACKING_STATE_SEARCH;
+	target.servo_status = dyt_target_s::SERVO_STATUS_ONLINE;
+	target.video_source = dyt_target_s::VIDEO_SOURCE_VIS_1;
+	target.los_x_rad = msg.data(2);
+	target.los_y_rad = msg.data(3);
+	target.gimbal_roll_rad = msg.data(4);
+	target.gimbal_pitch_frame_rad = msg.data(5);
+	target.gimbal_pitch_rad = msg.data(5);
+	target.gimbal_yaw_rad = msg.data(6);
+	target.bbox_width_px = msg.data(7);
+	target.bbox_height_px = msg.data(8);
+	target.miss_x_px = static_cast<int16_t>(msg.data(9));
+	target.miss_y_px = static_cast<int16_t>(msg.data(10));
+	target.range_m = NAN; // A monocular tracker does not measure range.
+	target.zoom_ratio = 1.f;
+	target.frame_dt_s = msg.data(11);
+	target.gimbal_roll_rate_rad_s = NAN;
+	target.gimbal_pitch_rate_rad_s = NAN;
+	target.gimbal_yaw_rate_rad_s = NAN;
+	target.last_rx_age_s = (now - sample) * 1e-6f;
+	_dyt_target_pub.publish(target);
 }
 
 bool GZBridge::subscribeClock(bool required)

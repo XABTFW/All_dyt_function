@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# @name FPV Quadrotor Tailsitter with upward-facing gimbal
+#
+# @type VTOL Quad Tailsitter
+#
+
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=fpv_quadtailsitter_gimbal}
+
+. ${R}etc/init.d-posix/airframes/4022_gz_fpv_quadtailsitter
+
+# Gazebo image/pose packets already carry exposure/sample timestamps.
+param set-default DYTG_DLY_MS 0
+param set-default DYTG_GMB_DLY 0
+
+# Use the simulated gimbal through the Gazebo bridge.
+param set-default MNT_MODE_IN 4
+param set-default MNT_MODE_OUT 2
+param set-default MNT_RC_IN_MODE 1
+
+param set-default MNT_MAN_ROLL 1
+param set-default MNT_MAN_PITCH 2
+param set-default MNT_MAN_YAW 3
+
+param set-default MNT_RANGE_ROLL 90
+param set-default MNT_RANGE_PITCH 180
+param set-default MNT_RANGE_YAW 720

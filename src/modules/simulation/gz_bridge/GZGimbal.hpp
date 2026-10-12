@@ -38,6 +38,8 @@ private:
 
 	gz::transport::Node &_node;
 	pthread_mutex_t _node_mutex;
+	std::string _image_owner_topic;
+	hrt_abstime _image_owner_time{0};
 
 	uORB::Subscription _gimbal_device_set_attitude_sub{ORB_ID(gimbal_device_set_attitude)};
 	uORB::Subscription _gimbal_controls_sub{ORB_ID(gimbal_controls)};
@@ -63,7 +65,7 @@ private:
 	float _pitch_rate_stp = NAN;
 	float _yaw_rate_stp = NAN;
 
-	hrt_abstime _last_time_update;
+	hrt_abstime _last_time_update{0};
 
 	// Mount parameters
 	param_t _mnt_range_pitch_handle = PARAM_INVALID;
@@ -121,6 +123,7 @@ private:
 	void Run() override;
 	void stop();
 	void gimbalIMUCallback(const gz::msgs::IMU &IMU_data);
+	void imageOwnerCallback(const gz::msgs::Boolean &message);
 	void updateParameters();
 	/// @brief Poll for new gimbal setpoints either from mavlink gimbal v2 protocol (gimbal_device_set_attitude topic) or from RC inputs (gimbal_controls topic).
 	/// @return true if a new setpoint has been requested; false otherwise.
